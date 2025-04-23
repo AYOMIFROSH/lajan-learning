@@ -1,33 +1,49 @@
-import { useState } from "react";
-import { useAuthStore } from "@/store/auth-store";
+import { useState } from 'react';
+import { auth } from '@/firebase/config';
 
-interface LoginValues {
-  email: string;
-  password: string;
-}
-
-const useLogin = () => {
-  const { login, error: storeError, isLoading } = useAuthStore();
+export default function useLogin() {
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loginUser = async (values: LoginValues) => {
+  const loginUser = async (credentials: { email: string; password: string }) => {
+    setLoading(true);
+    setError(null);
+    
     try {
-      // Clear any previous errors
-      setError(null);
+      const { email, password } = credentials;
+      const userCredential = await auth.signInWithEmailAndPassword(email, password);
       
-      // Call the login function from our store
-      await login(values.email, values.password);
-      
-      // If there was an error in the store, update our local error state
-      if (storeError) {
-        setError(storeError);
+      // Check if email is verified
+      if (!userCredential.user.emailVerified) {
+        setError('Please verify your email before logging in');
+        setLoading(false);
+        return false;
       }
-    } catch (err: any) {
-      setError(err.message || "An error occurred during login.");
+      
+      return true;
+    } catch (error: any) {
+      console.error('Login error:', error);
+      
+      let errorMessage = 'Invalid email or password';
+      if (error.code === 'auth/invalid-credential') {
+        errorMessage = 'Invalid email or password';
+      } else if (error.code === 'auth/user-disabled') {
+        errorMessage = 'This account has been disabled';
+      } else if (error.code === 'auth/user-not-found') {
+        errorMessage = 'No account found with this email';
+      } else if (error.code === 'auth/wrong-password') {
+        errorMessage = 'Incorrect password';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many failed login attempts. Please try again later or reset your password';
+      }
+      
+      setError(errorMessage);
+      setLoading(false);
+      return false;
+    } finally {
+      setLoading(false);
     }
   };
 
-  return { loginUser, loading: isLoading, error: error || storeError };
-};
-
-export default useLogin;
+  return { loginUser, loading, error };
+}

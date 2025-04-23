@@ -2,25 +2,17 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User, AuthState, LearningProgress } from '@/types/user';
-import { Platform } from 'react-native';
 import 'react-native-get-random-values';
 
-// API base URL - change this to your actual server URL
-const API_BASE_URL = Platform.select({
-  ios: 'http://172.20.10.3:3000/api',
-  android: 'http://10.0.2.2:3000/api',
-  web: 'http://localhost:3000/api',
-}) || 'http://localhost:3000/api';
-
-// For debugging network requests
-console.log(`Using API URL: ${API_BASE_URL}`);
+// Firebase imports
+import { firebase, firebaseAuth, firestoreDB } from '@/firebase/config';
 
 interface AuthStore extends AuthState {
   // Authentication
   login: (email: string, password: string) => Promise<void>;
   socialLogin: (provider: 'google' | 'apple') => Promise<void>;
   logout: () => Promise<void>;
-  register: (email: string, password: string, name: string) => Promise<void>;
+  register: (email: string, password: string, name: string) => Promise<{ user: User; token: string; }>;
   resetPassword: (email: string) => Promise<void>;
   initializeAuthListener: () => (() => void) | undefined;
   clearPersistedState: () => Promise<void>;
@@ -46,11 +38,57 @@ interface AuthStore extends AuthState {
   completeLesson: (lessonId: string) => Promise<void>;
 }
 
-const mapUserData = (userData: any) => {
-  return {
-    ...userData,
-    name: userData.Name || userData.name || '', // Map Name to name
-  };
+// Helper to map Firebase user to our User type
+const mapFirebaseUser = async (firebaseUser: any): Promise<User> => {
+  try {
+    // Get additional user data from Firestore
+    const userDoc = await firestoreDB.collection('users').doc(firebaseUser.uid).get();
+    const userData = userDoc.data() || {};
+    
+    return {
+      id: firebaseUser.uid,
+      email: firebaseUser.email || '',
+      name: firebaseUser.displayName || userData.name || '',
+      avatar: firebaseUser.photoURL || userData.avatar || '',
+      verified: firebaseUser.emailVerified,
+      role: userData.role || 'user',
+      learningStyle: userData.learningStyle,
+      preferredTopics: userData.preferredTopics || [],
+      knowledgeLevel: userData.knowledgeLevel,
+      points: userData.points || 0,
+      streak: userData.streak || 0,
+      completedLessons: userData.completedLessons || [],
+      guardianEmail: userData.guardianEmail,
+      guardianConnected: userData.guardianConnected || false,
+      createdAt: userData.createdAt || new Date().toISOString(),
+      level: userData.level || 0,
+      isMinor: userData.isMinor || false,
+      lastActive: userData.lastActive || null,
+    };
+  } catch (error) {
+    console.error('Error mapping Firebase user:', error);
+    // Return minimal user object if Firestore fetch fails
+    return {
+      id: firebaseUser.uid,
+      email: firebaseUser.email || '',
+      name: firebaseUser.displayName || '',
+      avatar: firebaseUser.photoURL || '',
+      verified: firebaseUser.emailVerified,
+      role: 'user',
+      points: 0,
+      completedLessons: [],
+      createdAt: new Date().toISOString(),
+      learningStyle: null,
+      preferredTopics: [],
+      knowledgeLevel: 0,
+      streak: 0,
+      guardianEmail: undefined,
+      guardianConnected: false,
+      level: 0,
+      isMinor: false,
+      lastActive: null,
+    };
+  }
 };
 
 export const useAuthStore = create<AuthStore>()(
@@ -91,189 +129,147 @@ export const useAuthStore = create<AuthStore>()(
       },
 
       initializeAuthListener: () => {
-        // Check if there's a stored token and validate it if needed
-        const checkAuthState = async () => {
-          // If we've already attempted auto-login, don't try again
-          if (get().autoLoginAttempted) {
-            console.log("Auto-login already attempted, skipping");
-            return;
-          }
+        console.log('Initializing Firebase auth listener');
 
-          set({ isLoading: true });
-          try {
-            // Try to restore auth state from persisted storage
-            const storedData = await AsyncStorage.getItem('lajan-auth-storage');
+        // Mark that we've attempted auto-login
+        set({ autoLoginAttempted: true, isLoading: true });
 
-            if (storedData) {
-              const parsedData = JSON.parse(storedData);
-              const userData = parsedData.state?.user;
-              const storedToken = parsedData.state?.token;
-              const onboardingComplete = parsedData.state?.isOnboardingComplete || false;
-
-              if (userData && storedToken) {
-                // Check if the token is still valid by making a request to the server
-                const response = await fetch(`${API_BASE_URL}/auth/validate-token`, {
-                  method: 'GET',
-                  headers: {
-                    'Authorization': `Bearer ${storedToken}`,
-                    'Content-Type': 'application/json'
-                  }
-                });
-
-                if (response.ok) {
-                  // Token is valid, restore the session
-                  set({
-                    user: mapUserData(userData), // Map Name to name
-                    token: storedToken,
-                    isAuthenticated: userData.verified,
-                    isLoading: false,
-                    error: null,
-                    autoLoginAttempted: true,
-                    isOnboardingComplete: onboardingComplete
-                  });
-
-                  // Fetch learning progress
-                  await get().fetchLearningProgress();
-
-                  console.log('Auth session restored successfully');
-                  return;
-                } else {
-                  // Token is invalid, clear persisted state
-                  console.log('Stored token is invalid, clearing session');
-                  await get().clearPersistedState();
+        // Set up Firebase auth state listener
+        const unsubscribe = firebaseAuth.onAuthStateChanged(async (firebaseUser) => {
+          if (firebaseUser) {
+            try {
+              console.log('User authenticated:', firebaseUser.uid);
+              
+              // Get ID token for API calls
+              const token = await firebaseUser.getIdToken();
+              
+              // Map Firebase user to our User type
+              const user = await mapFirebaseUser(firebaseUser);
+              
+              // Determine if onboarding is complete
+              const userHasCompletedOnboarding = !!(
+                user.learningStyle &&
+                user.preferredTopics?.length > 0 &&
+                user.knowledgeLevel !== undefined
+              );
+              
+              set({
+                user,
+                token,
+                isAuthenticated: firebaseUser.emailVerified,
+                isLoading: false,
+                error: null,
+                isOnboardingComplete: userHasCompletedOnboarding,
+              });
+              
+              // Fetch learning progress
+              await get().fetchLearningProgress();
+              
+              // Initialize progress store with user ID and token
+              if (user.id && token) {
+                try {
+                  // We need to get the progress store directly instead of using a hook
+                  const progressStore = await import('./progress-store').then(m => m.useProgressStore);
+                  await progressStore.getState().initializeProgress(user.id, token);
+                } catch (error) {
+                  console.error("Failed to initialize progress store:", error);
                 }
-              } else {
-                // No valid data found in storage
-                await get().clearPersistedState();
               }
-            } else {
-              // No data in storage
-              set({ autoLoginAttempted: true, isLoading: false });
+            } catch (error: any) {
+              console.error('Error handling authenticated user:', error);
+              set({
+                error: error.message || 'Error processing authenticated user',
+                isLoading: false
+              });
             }
-          } catch (error: any) {
-            console.error('Error checking auth state:', error);
-            // Start fresh by clearing any stored state on error
-            await get().clearPersistedState();
+          } else {
+            // User is signed out
+            console.log('User is signed out');
             set({
-              error: error.message || 'Failed to check auth state',
+              user: null,
+              token: null,
+              isAuthenticated: false,
               isLoading: false,
-              autoLoginAttempted: true
+              error: null,
+              isOnboardingComplete: false
             });
           }
-        };
+        });
 
-        // Run immediately
-        checkAuthState();
-
-        // Return a no-op function since we don't have a real listener to unsubscribe from
-        return () => { };
+        return unsubscribe;
       },
 
       login: async (email, password) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE_URL}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password }),
-          });
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(data.message || 'Login failed');
+          // Sign in with Firebase
+          const userCredential = await firebaseAuth.signInWithEmailAndPassword(email, password);
+          const firebaseUser = userCredential.user;
+          
+          // If email not verified, send verification email again
+          if (!firebaseUser.emailVerified) {
+            await firebaseUser.sendEmailVerification();
+            set({
+              error: 'Please verify your email before logging in',
+              isLoading: false,
+              autoLoginAttempted: true
+            });
+            return;
           }
-
+          
+          // Get ID token for API calls
+          const token = await firebaseUser.getIdToken();
+          
+          // Map Firebase user to our User type
+          const user = await mapFirebaseUser(firebaseUser);
+          
+          // Determine if onboarding is complete
           const userHasCompletedOnboarding = !!(
-            data.user?.learningStyle &&
-            data.user?.preferredTopics?.length > 0 &&
-            data.user?.knowledgeLevel !== undefined
+            user.learningStyle &&
+            user.preferredTopics?.length > 0 &&
+            user.knowledgeLevel !== undefined
           );
           
-          if (data.user && data.user.verified) {
-            set({
-              user: mapUserData(data.user), // Map Name to name
-              token: data.token,
-              isAuthenticated: true,
-              isLoading: false,
-              error: null,
-              autoLoginAttempted: true,
-              isOnboardingComplete: userHasCompletedOnboarding,
-            });
-            console.log("Onboarding complete:", userHasCompletedOnboarding);
-            await get().fetchLearningProgress();
-            
-            // Initialize progress store with user ID and token
-            if (data.user.id && data.token) {
-              try {
-                // We need to get the progress store directly instead of using a hook
-                const progressStore = await import('./progress-store').then(m => m.useProgressStore);
-                await progressStore.getState().initializeProgress(data.user.id, data.token);
-              } catch (error) {
-                console.error("Failed to initialize progress store:", error);
-              }
-            }
-          } else {
-            set({
-              user: mapUserData(data.user), // Map Name to name
-              token: data.token,
-              isAuthenticated: false,
-              isLoading: false,
-              error: 'Please verify your email before logging in',
-              autoLoginAttempted: true,
-              isOnboardingComplete: false, 
-            });
-          }
-        } catch (error: any) {
-          console.error('Login error:', error);
           set({
-            error: error.message || 'Invalid email or password',
-            isLoading: false,
-            autoLoginAttempted: true
-          });
-        }
-      },
-
-      socialLogin: async (provider) => {
-        set({ isLoading: true, error: null });
-        try {
-          const response = await fetch(`${API_BASE_URL}/auth/social-login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ provider }),
-          });
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(data.message || `Failed to login with ${provider}`);
-          }
-
-          set({
-            user: data.user,
-            token: data.token,
+            user,
+            token,
             isAuthenticated: true,
             isLoading: false,
             error: null,
-            autoLoginAttempted: true
+            autoLoginAttempted: true,
+            isOnboardingComplete: userHasCompletedOnboarding,
           });
-
-          // Fetch learning progress
+          
+          console.log("Onboarding complete:", userHasCompletedOnboarding);
           await get().fetchLearningProgress();
           
           // Initialize progress store with user ID and token
-          if (data.user.id && data.token) {
+          if (user.id && token) {
             try {
               const progressStore = await import('./progress-store').then(m => m.useProgressStore);
-              await progressStore.getState().initializeProgress(data.user.id, data.token);
+              await progressStore.getState().initializeProgress(user.id, token);
             } catch (error) {
-              console.error("Failed to initialize progress store after social login:", error);
+              console.error("Failed to initialize progress store:", error);
             }
           }
         } catch (error: any) {
-          console.error(`${provider} login error:`, error);
+          console.error('Login error:', error);
+          let errorMessage = 'Invalid email or password';
+          
+          if (error.code === 'auth/invalid-credential') {
+            errorMessage = 'Invalid email or password';
+          } else if (error.code === 'auth/user-disabled') {
+            errorMessage = 'This account has been disabled';
+          } else if (error.code === 'auth/user-not-found') {
+            errorMessage = 'No account found with this email';
+          } else if (error.code === 'auth/wrong-password') {
+            errorMessage = 'Incorrect password';
+          } else if (error.code === 'auth/too-many-requests') {
+            errorMessage = 'Too many failed login attempts. Please try again later or reset your password';
+          }
+          
           set({
-            error: error.message || `Failed to login with ${provider}`,
+            error: errorMessage,
             isLoading: false,
             autoLoginAttempted: true
           });
@@ -282,33 +278,21 @@ export const useAuthStore = create<AuthStore>()(
 
       logout: async () => {
         try {
-          // Call logout endpoint if needed
-          const token = get().token;
-          if (token) {
-            // Before logout, try to sync progress with server one last time
-            try {
-              const progressStore = await import('./progress-store').then(m => m.useProgressStore);
+          // Before logout, try to sync progress
+          try {
+            const token = get().token;
+            const progressStore = await import('./progress-store').then(m => m.useProgressStore);
+            if (token) {
               await progressStore.getState().syncWithServer(token);
-              console.log("Progress synced with server before logout");
-            } catch (syncError) {
-              console.warn('Failed to sync progress before logout:', syncError);
+              console.log("Progress synced before logout");
             }
-            
-            // Optional: Notify server about logout
-            try {
-              await fetch(`${API_BASE_URL}/auth/logout`, {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json'
-                }
-              });
-            } catch (logoutError) {
-              // Continue even if server logout fails
-              console.warn('Server logout failed, continuing with client logout');
-            }
+          } catch (syncError) {
+            console.warn('Failed to sync progress before logout:', syncError);
           }
-      
+          
+          // Sign out from Firebase
+          await firebaseAuth.signOut();
+          
           // Reset progress store
           try {
             const progressStore = await import('./progress-store').then(m => m.useProgressStore);
@@ -316,17 +300,15 @@ export const useAuthStore = create<AuthStore>()(
           } catch (resetError) {
             console.warn('Failed to reset progress store:', resetError);
           }
-      
+          
           // Call clearPersistedState to handle the cleanup
           await get().clearPersistedState();
-      
+          
           console.log('Successfully logged out');
         } catch (error: any) {
           console.error('Logout error:', error);
-          set({
-            error: 'Failed to log out'
-          });
-      
+          set({ error: 'Failed to log out' });
+          
           // Still try to clear state even if there was an error
           try {
             await get().clearPersistedState();
@@ -338,475 +320,136 @@ export const useAuthStore = create<AuthStore>()(
           throw error;
         }
       },
-      
 
       register: async (email, password, name) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE_URL}/auth/signup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email,
-              password,
-              Name: name
-            }),
+          // Create user with Firebase
+          const userCredential = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+          const firebaseUser = userCredential.user;
+          
+          // Update profile with displayName
+          await firebaseUser.updateProfile({ displayName: name });
+          
+          // Create user document in Firestore
+          await firestoreDB.collection('users').doc(firebaseUser.uid).set({
+            email,
+            name,
+            role: 'user',
+            points: 0,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
           });
-
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(data.message || 'Registration failed');
-          }
-
+          
+          // Send verification email
+          await firebaseUser.sendEmailVerification();
+          
+          // Get ID token
+          const token = await firebaseUser.getIdToken();
+          
+          // Map Firebase user to our User type
+          const user = await mapFirebaseUser(firebaseUser);
+          
           // For registration, store the user data but don't set authenticated
           // until they verify their email
           set({
-            user: mapUserData(data.user), // Map Name to name
-            token: data.token,
+            user,
+            token,
             isAuthenticated: false, 
             isLoading: false,
             error: null,
             autoLoginAttempted: true,
             isOnboardingComplete: false 
           });
-
-          return data;
+          
+          return { user, token };
         } catch (error: any) {
           console.error('Registration error:', error);
+          let errorMessage = 'Registration failed';
+          
+          if (error.code === 'auth/email-already-in-use') {
+            errorMessage = 'This email is already in use';
+          } else if (error.code === 'auth/invalid-email') {
+            errorMessage = 'Invalid email format';
+          } else if (error.code === 'auth/weak-password') {
+            errorMessage = 'Password is too weak';
+          } else if (error.code === 'auth/operation-not-allowed') {
+            errorMessage = 'Email/password accounts are not enabled';
+          }
+          
           set({
-            error: error.message || 'Registration failed',
+            error: errorMessage,
             isLoading: false,
             autoLoginAttempted: true
           });
-          throw error;
+          throw new Error(errorMessage);
         }
       },
 
       resetPassword: async (email) => {
         set({ isLoading: true, error: null });
-        // call the public forgot-password endpoint instead
-        const response = await fetch(`${API_BASE_URL}/auth/forgotpassword`,  {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
-        });
-        const data = await response.json();
-    
-        if (!response.ok) {
-          // set error state then throw so the component's catch block runs
+        try {
+          await firebaseAuth.sendPasswordResetEmail(email);
+          set({ isLoading: false });
+        } catch (error: any) {
+          console.error('Reset password error:', error);
+          let errorMessage = 'Failed to send password reset email';
+          
+          if (error.code === 'auth/invalid-email') {
+            errorMessage = 'Invalid email address';
+          } else if (error.code === 'auth/user-not-found') {
+            errorMessage = 'No user found with this email';
+          }
+          
           set({
-            error: data.message || 'Failed to send password reset email',
+            error: errorMessage,
             isLoading: false,
           });
-          throw new Error(data.message || 'Failed to send password reset email');
-        }
-    
-        // success
-        set({ isLoading: false });
-      },
-
-      // User profile methods
-      // In auth-store.tsx, setLearningStyle function
-      setLearningStyle: async (style) => {
-        const { user, token } = get();
-        if (user && token) {
-          try {
-            set({ isLoading: true, error: null });
-            const response = await fetch(`${API_BASE_URL}/user/learning-style`, {
-              method: 'PUT',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ style }),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to update learning style');
-            }
-
-            // Important: Only update user data, don't set onboarding complete yet
-            set({
-              isLoading: false,
-              user: { ...user, learningStyle: style }
-              // Don't set isOnboardingComplete: true here - it should be set after knowledge level
-            });
-          } catch (error: any) {
-            console.error('Error updating learning style:', error);
-            set({
-              error: error.message || 'Failed to update learning style',
-              isLoading: false
-            });
-            throw error;
-          }
-        }
-      },
-
-      setPreferredTopics: async (topics) => {
-        const { user, token } = get();
-        if (user && token) {
-          try {
-            set({ isLoading: true, error: null });
-            const response = await fetch(`${API_BASE_URL}/user/topics`, {
-              method: 'PUT',
-              headers: { 
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json' 
-              },
-              body: JSON.stringify({ topics }),
-            });
-      
-            const data = await response.json();
-            
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to update preferred topics');
-            }
-            
-            // Only update user data, don't set onboarding complete yet
-            console.log("Successfully saved topics, updating user data...");
-            set({ 
-              isLoading: false,
-              user: { ...user, preferredTopics: topics }
-              // Don't set isOnboardingComplete: true here
-            });
-          } catch (error: any) {
-            console.error('Error updating preferred topics:', error);
-            set({ 
-              error: error.message || 'Failed to update preferred topics', 
-              isLoading: false 
-            });
-            throw error;
-          }
+          throw new Error(errorMessage);
         }
       },
       
-      setKnowledgeLevel: async (level) => {
-        const { user, token } = get();
-        if (user && token) {
-          try {
-            set({ isLoading: true, error: null });
-            const response = await fetch(`${API_BASE_URL}/user/knowledge-level`, {
-              method: 'PUT',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ level }),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to update knowledge level');
-            }
-
-            // This is the final step of the onboarding process, so mark onboarding as complete
-            set({
-              isLoading: false,
-              user: { ...user, knowledgeLevel: level },
-              isOnboardingComplete: true // Set onboarding complete when knowledge level is set
-            });
-          } catch (error: any) {
-            console.error('Error updating knowledge level:', error);
-            set({
-              error: error.message || 'Failed to update knowledge level',
-              isLoading: false
-            });
-            throw error;
-          }
-        }
+      // Placeholder stubs for other methods
+      socialLogin: async () => {
+        throw new Error('Social login not yet implemented for React Native');
       },
-
-      updateUser: async (userData) => {
-        const { user, token } = get();
-        if (user && token) {
-          try {
-            set({ isLoading: true, error: null });
-            const response = await fetch(`${API_BASE_URL}/user/update-profile`, {
-              method: 'PUT',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify(userData),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to update user profile');
-            }
-
-            set({
-              isLoading: false,
-              user: { ...user, ...userData }
-            });
-          } catch (error: any) {
-            console.error('Error updating user profile:', error);
-            set({
-              error: error.message || 'Failed to update user profile',
-              isLoading: false
-            });
-            throw error;
-          }
-        }
+      
+      setLearningStyle: async () => {
+        throw new Error('Not yet implemented');
       },
-
-      uploadAvatar: async (formData) => {
-        const { user, token } = get();
-        if (user && token) {
-          try {
-            set({ isLoading: true, error: null });
-            const response = await fetch(`${API_BASE_URL}/user/avatar`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${token}`
-                // Don't set Content-Type here, it will be set automatically with the boundary
-              },
-              body: formData
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to upload avatar');
-            }
-
-            set({
-              isLoading: false,
-              user: { ...user, avatar: data.user.avatar }
-            });
-          } catch (error: any) {
-            console.error('Error uploading avatar:', error);
-            set({
-              error: error.message || 'Failed to upload avatar',
-              isLoading: false
-            });
-            throw error;
-          }
-        }
+      
+      setPreferredTopics: async () => {
+        throw new Error('Not yet implemented');
       },
-
-      connectGuardian: async (guardianEmail) => {
-        const { user, token } = get();
-        if (user && token) {
-          try {
-            set({ isLoading: true, error: null });
-            const response = await fetch(`${API_BASE_URL}/user/guardian`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ guardianEmail }),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to connect guardian');
-            }
-
-            set({
-              isLoading: false,
-              user: {
-                ...user,
-                guardianEmail,
-                guardianConnected: data.user.guardianConnected
-              }
-            });
-          } catch (error: any) {
-            console.error('Error connecting guardian:', error);
-            set({
-              error: error.message || 'Failed to connect guardian',
-              isLoading: false
-            });
-            throw error;
-          }
-        }
+      
+      setKnowledgeLevel: async () => {
+        throw new Error('Not yet implemented');
       },
-
-      // Learning progress methods
+      
+      updateUser: async () => {
+        throw new Error('Not yet implemented');
+      },
+      
+      uploadAvatar: async () => {
+        throw new Error('Not yet implemented');
+      },
+      
+      connectGuardian: async () => {
+        throw new Error('Not yet implemented');
+      },
+      
       fetchLearningProgress: async () => {
-        const { token, user } = get();
-        if (token) {
-          try {
-            set({ isLoading: true, error: null });
-            const response = await fetch(`${API_BASE_URL}/progress`, {
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to fetch learning progress');
-            }
-
-            set({
-              isLoading: false,
-              learningProgress: data.progress
-            });
-            
-            // Also update the progress store with this data
-            if (user && user.id && data.progress) {
-              try {
-                // Import and use the progress store
-                const progressStore = await import('./progress-store').then(m => m.useProgressStore);
-                const currentProgress = progressStore.getState().progress;
-                
-                // Only overwrite if we don't have progress yet or if userId matches
-                if (!currentProgress || currentProgress.userId === user.id) {
-                  progressStore.setState({ progress: data.progress });
-                }
-              } catch (error) {
-                console.error("Failed to update progress store:", error);
-              }
-            }
-          } catch (error: any) {
-            console.error('Error fetching learning progress:', error);
-            set({
-              error: error.message || 'Failed to fetch learning progress',
-              isLoading: false
-            });
-          }
-        }
+        // This will be implemented when we update the progress store
+        console.log('Fetching learning progress');
       },
-
-      completeModule: async (topicId, moduleId) => {
-        const { token, user } = get();
-        if (token && user) {
-          try {
-            set({ isLoading: true, error: null });
-            
-            // Call server endpoint to complete module
-            const response = await fetch(`${API_BASE_URL}/progress/module/complete`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ topicId, moduleId }),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to complete module');
-            }
-
-            // Update user points and learning progress in auth store
-            set({
-              isLoading: false,
-              learningProgress: data.progress,
-              user: {
-                ...user,
-                points: (user.points || 0) + data.pointsEarned,
-                streak: data.progress.streak
-              }
-            });
-            
-            // Also update the progress store
-            try {
-              // Import and use the progress store
-              const progressStore = await import('./progress-store').then(m => m.useProgressStore);
-              
-              // Update local progress with the server response
-              if (data.progress) {
-                progressStore.setState({ progress: data.progress });
-              } else {
-                // If no progress in response, mark the module as completed in the progress store
-                await progressStore.getState().completeModule(
-                  user.id, 
-                  topicId, 
-                  moduleId, 
-                  1.0, // Default perfect score
-                  token
-                );
-              }
-            } catch (error) {
-              console.error("Failed to update progress store after completing module:", error);
-            }
-          } catch (error: any) {
-            console.error('Error completing module:', error);
-            set({
-              error: error.message || 'Failed to complete module',
-              isLoading: false
-            });
-            throw error;
-          }
-        }
+      
+      completeModule: async () => {
+        throw new Error('Not yet implemented');
       },
-
-      completeLesson: async (lessonId) => {
-        const { token, user } = get();
-        if (token && user) {
-          try {
-            set({ isLoading: true, error: null });
-            
-            // Call server endpoint to complete lesson
-            const response = await fetch(`${API_BASE_URL}/progress/lesson/complete`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ lessonId }),
-            });
-
-            const data = await response.json();
-
-            if (!response.ok) {
-              throw new Error(data.message || 'Failed to complete lesson');
-            }
-
-            // Update user points, completed lessons, and learning progress in auth store
-            set({
-              isLoading: false,
-              learningProgress: data.progress,
-              user: {
-                ...user,
-                points: (user.points || 0) + data.pointsEarned,
-                streak: data.user.streak,
-                completedLessons: data.user.completedLessons || []
-              }
-            });
-            
-            // Also update the progress store
-            try {
-              // Import and use the progress store
-              const progressStore = await import('./progress-store').then(m => m.useProgressStore);
-              
-              // Update local progress with the server response
-              if (data.progress) {
-                progressStore.setState({ progress: data.progress });
-              }
-              
-              // Also sync with the server to ensure everything is up to date
-              if (token) {
-                await progressStore.getState().syncWithServer(token).catch(err => {
-                  console.log("Error syncing progress after lesson completion:", err);
-                });
-              }
-            } catch (error) {
-              console.error("Failed to update progress store after completing lesson:", error);
-            }
-          } catch (error: any) {
-            console.error('Error completing lesson:', error);
-            set({
-              error: error.message || 'Failed to complete lesson',
-              isLoading: false
-            });
-            throw error;
-          }
-        }
-      }
+      
+      completeLesson: async () => {
+        throw new Error('Not yet implemented');
+      },
     }),
     {
       name: 'lajan-auth-storage',

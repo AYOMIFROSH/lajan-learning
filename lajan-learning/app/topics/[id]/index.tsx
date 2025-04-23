@@ -72,7 +72,8 @@ export default function TopicDetailScreen() {
   useEffect(() => {
     // Initialize progress if not already done
     if (user && !progress) {
-      initializeProgress(user?.id || 'guest-user', null);
+      const { token } = useAuthStore.getState();
+      initializeProgress(user?.id || 'guest-user', token);
     }
 
     // Find the topic and check if it's today's recommended topic

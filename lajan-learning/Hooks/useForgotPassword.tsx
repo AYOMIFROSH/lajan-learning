@@ -1,42 +1,34 @@
-import { useState } from "react";
-import { useAuthStore } from "@/store/auth-store";
+import { useState } from 'react';
+import { auth } from '@/firebase/config';
 
-const useForgotPassword = () => {
-  const { resetPassword, error: storeError, isLoading } = useAuthStore();
+export default function useForgotPassword() {
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isEmailSent, setIsEmailSent] = useState<boolean>(false);
 
   const sendPasswordResetEmail = async (email: string) => {
+    setLoading(true);
+    setError(null);
+    
     try {
-      // Clear any previous errors
-      setError(null);
-      setIsEmailSent(false);
-      
-      // Call the resetPassword function from our store
-      await resetPassword(email);
-      
-      // Check if there was an error in the store
-      if (storeError) {
-        setError(storeError);
-        return false;
-      }
-      
-      // Set email sent flag to true if successful
-      setIsEmailSent(true);
+      // Send password reset email using Firebase
+      await auth.sendPasswordResetEmail(email);
       return true;
     } catch (error: any) {
-      console.error("Password reset error:", error.message);
-      setError(error.message || "Failed to send password reset email");
+      console.error('Password reset error:', error);
+      
+      let errorMessage = 'Failed to send password reset email';
+      if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Invalid email address';
+      } else if (error.code === 'auth/user-not-found') {
+        errorMessage = 'No user found with this email';
+      }
+      
+      setError(errorMessage);
       return false;
+    } finally {
+      setLoading(false);
     }
   };
 
-  return { 
-    loading: isLoading, 
-    error: error || storeError, 
-    sendPasswordResetEmail,
-    isEmailSent 
-  };
-};
-
-export default useForgotPassword;
+  return { sendPasswordResetEmail, loading, error };
+}

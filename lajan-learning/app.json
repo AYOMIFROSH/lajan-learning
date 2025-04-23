@@ -14,7 +14,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.lajan-learning.financeapp",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -31,7 +35,20 @@
     },
     "permissions": [
       "INTERNET"
-    ]
-    
+    ],
+    "extra": {
+      "FIREBASE_API_KEY": "your-real-api-key",
+      "FIREBASE_AUTH_DOMAIN": "your-project.firebaseapp.com",
+      "FIREBASE_PROJECT_ID": "your-project-id",
+      "FIREBASE_STORAGE_BUCKET": "your-project.appspot.com",
+      "FIREBASE_MESSAGING_SENDER_ID": "your-sender-id",
+      "FIREBASE_APP_ID": "your-app-id",
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "affe61a5-2482-4e43-8b9f-3589e3dfd86e"
+      }
+    }
   }
 }

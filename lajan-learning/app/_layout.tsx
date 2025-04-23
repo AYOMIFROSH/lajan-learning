@@ -6,7 +6,6 @@ import { useEffect } from "react";
 import ErrorBoundary from "@/app/error-boundary";
 import { StatusBar } from "expo-status-bar";
 import colors from "@/constants/colors";
-import AuthBridge from "@/AuthContext/AuthBridge";
 // Import your enhanceTopicsWithKeyPoints function
 import { enhanceTopicsWithKeyPoints } from "@/mocks/topics";
 
@@ -45,10 +44,8 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
-      <AuthBridge>
         <StatusBar style="dark" />
         <RootLayoutNav />
-      </AuthBridge>
     </ErrorBoundary>
   );
 }

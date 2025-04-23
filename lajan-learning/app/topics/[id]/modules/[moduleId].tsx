@@ -42,7 +42,6 @@ import { useQuizStore } from '@/store/quize-store';
 import { useNetInfo } from '@react-native-community/netinfo';
 import NetworkErrorBanner from '@/components/networkErrorBanner';
 
-
 const { width } = Dimensions.get('window');
 
 // Helper function to check if a topic is today's recommended topic
@@ -84,7 +83,7 @@ const isRecommendedTopic = (topicId: string, userPreferredTopics: string[] = [],
 export default function ModuleScreen() {
   const { id, moduleId } = useLocalSearchParams<{ id: string, moduleId: string }>();
   const router = useRouter();
-  const { user } = useAuthStore();
+  const { user, token } = useAuthStore();
   const { progress, completeModule } = useProgressStore();
   
   const [topic, setTopic] = useState<Topic | null>(null);
@@ -107,21 +106,21 @@ export default function ModuleScreen() {
   const [mixedKeyPoints, setMixedKeyPoints] = useState<string[]>([]);
 
   const [showNetworkError, setShowNetworkError] = useState(false);
-const [networkErrorMessage, setNetworkErrorMessage] = useState("Network connection issue. Using offline mode.");
-const netInfo = useNetInfo();
+  const [networkErrorMessage, setNetworkErrorMessage] = useState("Network connection issue. Using offline mode.");
+  const netInfo = useNetInfo();
 
-// Add this useEffect to monitor network status
-useEffect(() => {
-  if (netInfo.isConnected === false) {
-    setNetworkErrorMessage("No internet connection. Some features may be limited.");
-    setShowNetworkError(true);
-  } else if (netInfo.isConnected === true && showNetworkError) {
-    // Auto-dismiss after connection is restored
-    setTimeout(() => {
-      setShowNetworkError(false);
-    }, 3000);
-  }
-}, [netInfo.isConnected]);
+  // Add this useEffect to monitor network status
+  useEffect(() => {
+    if (netInfo.isConnected === false) {
+      setNetworkErrorMessage(networkErrorMessage);
+      setShowNetworkError(true);
+    } else if (netInfo.isConnected === true && showNetworkError) {
+      // Auto-dismiss after connection is restored
+      setTimeout(() => {
+        setShowNetworkError(false);
+      }, 3000);
+    }
+  }, [netInfo.isConnected]);
 
   const getDifficultyColor = (difficulty: 'beginner' | 'intermediate' | 'advanced' | string) => {
     switch(difficulty) {
@@ -648,7 +647,7 @@ const completeQuiz = async () => {
       finalScore,
       totalQuestions,
       mixedKeyPoints, // Pass the mixed keypoints we used for question generation
-      userLearningStyle // Pass user's learning style for tailored feedback
+      userLearningStyle ?? undefined // Convert null to undefined for compatibility
     );
     
     // Make sure we're using the feedback text, not the object

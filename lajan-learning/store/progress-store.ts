@@ -1,14 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
 
-// API base URL - change this to your actual server URL
-const API_BASE_URL = Platform.select({
-  ios: 'http://172.20.10.3:3000/api',
-  android: 'http://10.0.2.2:3000/api',
-  web: 'http://localhost:3000/api',
-}) || 'http://localhost:3000/api';
+// Firebase imports
+import { firebase, firestoreDB } from '@/firebase/config';
 
 // Define interfaces for better type safety
 interface ModuleProgress {
@@ -50,8 +45,8 @@ interface ProgressStore extends ProgressState {
   checkModuleCompletion: (topicId: string, moduleId: string) => boolean;
   wasModuleCompletedToday: (topicId: string, moduleId: string) => boolean;
   areAllModulesCompletedToday: (topicId: string, modules: any[]) => boolean;
-  syncWithServer: (token: string) => Promise<void>; // New function to sync with server
-  fetchProgressFromServer: (userId: string, token: string) => Promise<void>; // New function to fetch from server
+  syncWithServer: (token: string) => Promise<void>; // Function to sync with Firestore
+  fetchProgressFromServer: (userId: string, token: string) => Promise<void>; // Function to fetch from Firestore
 }
 
 export const useProgressStore = create<ProgressStore>()(
@@ -70,19 +65,19 @@ export const useProgressStore = create<ProgressStore>()(
           if (!progress) {
             console.log("Initializing progress for user:", userId);
             
-            // Try to get progress from server first
+            // Try to get progress from Firestore first
             if (token) {
               try {
                 await get().fetchProgressFromServer(userId, token);
-                console.log("Progress fetched from server");
+                console.log("Progress fetched from Firestore");
                 set({ isLoading: false });
                 return;
               } catch (error) {
-                console.error("Failed to fetch progress from server, initializing locally", error);
+                console.error("Failed to fetch progress from Firestore, initializing locally", error);
               }
             }
             
-            // If server fetch fails or no token, initialize locally
+            // If Firestore fetch fails or no token, initialize locally
             set({
               progress: {
                 userId,
@@ -106,23 +101,23 @@ export const useProgressStore = create<ProgressStore>()(
               isLoading: false
             });
             
-            // Sync this fix with server if token exists
+            // Sync this fix with Firestore if token exists
             if (token) {
               try {
                 await get().syncWithServer(token);
               } catch (error) {
-                console.error("Failed to sync progress fix with server", error);
+                console.error("Failed to sync progress fix with Firestore", error);
               }
             }
           } else if (progress.userId !== userId) {
             // If the user ID doesn't match, reinitialize the progress
             console.log("User ID mismatch, reinitializing progress");
             
-            // Try to get progress from server for the new user
+            // Try to get progress from Firestore for the new user
             if (token) {
               try {
                 await get().fetchProgressFromServer(userId, token);
-                console.log("Progress fetched from server for new user");
+                console.log("Progress fetched from Firestore for new user");
                 set({ isLoading: false });
                 return;
               } catch (error) {
@@ -130,7 +125,7 @@ export const useProgressStore = create<ProgressStore>()(
               }
             }
             
-            // If server fetch fails or no token, initialize locally
+            // If Firestore fetch fails or no token, initialize locally
             set({
               progress: {
                 userId,
@@ -147,7 +142,7 @@ export const useProgressStore = create<ProgressStore>()(
               try {
                 await get().syncWithServer(token);
               } catch (error) {
-                console.error("Failed to sync existing progress with server", error);
+                console.error("Failed to sync existing progress with Firestore", error);
               }
             }
             set({ isLoading: false });
@@ -161,7 +156,7 @@ export const useProgressStore = create<ProgressStore>()(
         }
       },
 
-      // Enhanced completeModule function to track last attempt with timestamp and sync with server
+      // Enhanced completeModule function to track last attempt with timestamp and sync with Firestore
       completeModule: async (userId: string, topicId: string, moduleId: string, score: number, token: string | null) => {
         console.log("Completing module:", { userId, topicId, moduleId, score });
         set({ isLoading: true, error: null });
@@ -198,22 +193,25 @@ export const useProgressStore = create<ProgressStore>()(
             
             set({ progress: newProgress, isLoading: false });
             
-            // Sync with server if token exists
+            // Save to Firestore
             if (token) {
               try {
-                await get().syncWithServer(token);
+                // Save to Firestore
+                await firestoreDB.collection('progress').doc(userId).set(newProgress);
                 
-                // Also call the server's completeModule endpoint to ensure proper server-side logic is run
-                await fetch(`${API_BASE_URL}/progress/module/complete`, {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify({ topicId, moduleId }),
-                });
+                // Also update user points
+                const userDoc = await firestoreDB.collection('users').doc(userId).get();
+                
+                if (userDoc.exists) {
+                  const userData = userDoc.data();
+                  await firestoreDB.collection('users').doc(userId).update({
+                    points: (userData?.points || 0) + 50,
+                    streak: 1,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                  });
+                }
               } catch (error) {
-                console.error("Failed to sync new progress with server", error);
+                console.error("Failed to save new progress to Firestore", error);
               }
             }
             return;
@@ -245,6 +243,10 @@ export const useProgressStore = create<ProgressStore>()(
               topicsProgress[topicId].completedModules = [];
             }
             
+            // Check if module is already completed
+            const isNewCompletion = !topicsProgress[topicId].completedModules.includes(moduleId);
+            let pointsEarned = isNewCompletion ? 50 : 0;
+            
             // Update specific module progress with current timestamp
             const currentTimestamp = new Date().toISOString();
             topicsProgress[topicId].modules = {
@@ -257,7 +259,7 @@ export const useProgressStore = create<ProgressStore>()(
             };
             
             // Add moduleId to completedModules if not already there
-            if (!topicsProgress[topicId].completedModules.includes(moduleId)) {
+            if (isNewCompletion) {
               topicsProgress[topicId].completedModules.push(moduleId);
             }
             
@@ -272,7 +274,7 @@ export const useProgressStore = create<ProgressStore>()(
             };
             
             // Award points (50 per module)
-            const totalPoints = (progress.totalPoints || 0) + 50;
+            const totalPoints = (progress.totalPoints || 0) + pointsEarned;
             
             // Update last completed date for streak calculation
             const lastCompletedDate = currentTimestamp;
@@ -292,22 +294,27 @@ export const useProgressStore = create<ProgressStore>()(
             // Update streak
             get().updateStreak();
             
-            // Sync with server if token exists
+            // Save to Firestore
             if (token) {
               try {
-                await get().syncWithServer(token);
+                // Save progress to Firestore
+                await firestoreDB.collection('progress').doc(userId).set(updatedProgress);
                 
-                // Also call the server's completeModule endpoint to ensure proper server-side logic is run
-                await fetch(`${API_BASE_URL}/progress/module/complete`, {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json'
-                  },
-                  body: JSON.stringify({ topicId, moduleId }),
-                });
+                // Update user points if new completion
+                if (pointsEarned > 0) {
+                  const userDoc = await firestoreDB.collection('users').doc(userId).get();
+                  
+                  if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    await firestoreDB.collection('users').doc(userId).update({
+                      points: (userData?.points || 0) + pointsEarned,
+                      streak: updatedProgress.streak,
+                      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                  }
+                }
               } catch (error) {
-                console.error("Failed to sync updated progress with server", error);
+                console.error("Failed to save updated progress to Firestore", error);
               }
             }
             
@@ -355,7 +362,7 @@ export const useProgressStore = create<ProgressStore>()(
         return topicProgress.completed;
       },
 
-      // New function to check if module was completed today
+      // Function to check if module was completed today
       wasModuleCompletedToday: (topicId, moduleId) => {
         const { progress } = get();
         
@@ -380,7 +387,7 @@ export const useProgressStore = create<ProgressStore>()(
         );
       },
 
-      // New function to check if all modules in a topic were completed today
+      // Function to check if all modules in a topic were completed today
       areAllModulesCompletedToday: (topicId, modules) => {
         const { progress } = get();
         
@@ -457,7 +464,7 @@ export const useProgressStore = create<ProgressStore>()(
         set({ progress: null });
       },
       
-      // New function to sync progress with server
+      // Function to sync progress with Firestore
       syncWithServer: async (token: string) => {
         const { progress, isSyncing } = get();
         
@@ -468,81 +475,64 @@ export const useProgressStore = create<ProgressStore>()(
         try {
           set({ isSyncing: true });
           
-          console.log("Syncing progress with server...");
+          console.log("Syncing progress with Firestore...");
           
-          const response = await fetch(`${API_BASE_URL}/progress/sync`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(progress),
-          });
-          
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || 'Failed to sync progress with server');
-          }
-          
-          const data = await response.json();
+          // Save progress to Firestore
+          await firestoreDB.collection('progress').doc(progress.userId).set(progress);
           
           console.log("Progress synced successfully");
-          
-          // Update local progress with the server version in case there are any differences
-          if (data.progress) {
-            set({
-              progress: data.progress,
-              isSyncing: false
-            });
-          } else {
-            set({ isSyncing: false });
-          }
+          set({ isSyncing: false });
         } catch (error) {
-          console.error("Error syncing progress with server:", error);
+          console.error("Error syncing progress with Firestore:", error);
           set({ 
-            error: error instanceof Error ? error.message : "Failed to sync progress with server",
+            error: error instanceof Error ? error.message : "Failed to sync progress with Firestore",
             isSyncing: false 
           });
         }
       },
       
-      // New function to fetch progress from server
+      // Function to fetch progress from Firestore
       fetchProgressFromServer: async (userId: string, token: string) => {
         try {
           set({ isLoading: true, error: null });
           
-          console.log("Fetching progress from server...");
+          console.log("Fetching progress from Firestore...");
           
-          const response = await fetch(`${API_BASE_URL}/progress`, {
-            method: 'GET',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
-          });
+          // Get progress from Firestore
+          const progressDoc = await firestoreDB.collection('progress').doc(userId).get();
           
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || 'Failed to fetch progress from server');
+          if (progressDoc.exists) {
+            const progressData = progressDoc.data() as LearningProgress;
+            
+            console.log("Progress fetched successfully");
+            
+            // Update local progress with Firestore data
+            set({
+              progress: progressData,
+              isLoading: false
+            });
+          } else {
+            // No progress found, create a new one
+            const newProgress: LearningProgress = {
+              userId,
+              topicsProgress: {},
+              streak: 0,
+              lastCompletedDate: null,
+              totalPoints: 0
+            };
+            
+            // Save to Firestore
+            await firestoreDB.collection('progress').doc(userId).set(newProgress);
+            
+            set({
+              progress: newProgress,
+              isLoading: false
+            });
           }
-          
-          const data = await response.json();
-          
-          if (!data.progress) {
-            throw new Error('No progress data returned from server');
-          }
-          
-          console.log("Progress fetched successfully");
-          
-          // Update local progress with server data
-          set({
-            progress: data.progress,
-            isLoading: false
-          });
         } catch (error) {
-          console.error("Error fetching progress from server:", error);
+          console.error("Error fetching progress from Firestore:", error);
           set({ 
-            error: error instanceof Error ? error.message : "Failed to fetch progress from server",
+            error: error instanceof Error ? error.message : "Failed to fetch progress from Firestore",
             isLoading: false 
           });
           throw error; // Re-throw so caller can handle it

@@ -1,36 +1,51 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  Image, 
+  TouchableOpacity, 
+  ScrollView, 
+  KeyboardAvoidingView, 
+  Platform, 
+  Alert 
+} from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuthStore } from '@/store/auth-store';
 import colors from '@/constants/colors';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
 import { Mail, Lock, User, ArrowLeft } from 'lucide-react-native';
-import useLogin from '@/Hooks/useLogin';
-import useForgotPassword from '@/Hooks/useForgotPassword';
-import UseRegister from '@/Hooks/useSignup';
+
+// Firebase imports - using React Native Firebase
+import { firebase, firebaseAuth, firestoreDB } from '@/firebase/config';
 
 type AuthMode = 'login' | 'register';
 
 export default function AuthScreen() {
   const router = useRouter();
-  const { error: storeError, isLoading, isAuthenticated, user } = useAuthStore();
-  const { loginUser, loading: loginLoading, error: loginError } = useLogin();
-  const { registeruser, loading: registerLoading, error: registerError } = UseRegister();
-  const { sendPasswordResetEmail, loading: resetLoading, error: resetError } = useForgotPassword();
+  const params = useLocalSearchParams();
+  const { login, register, resetPassword, error: storeError, isLoading: storeLoading, isAuthenticated, user } = useAuthStore();
 
+  // Local state
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     // Set mounted to true when component mounts
     setMounted(true);
-  }, []);
+    
+    // If email was passed via params, set it
+    if (params.email) {
+      setEmail(params.email as string);
+    }
+  }, [params]);
 
   // Monitor authentication state to navigate when authenticated
   useEffect(() => {
@@ -38,7 +53,6 @@ export default function AuthScreen() {
     
     // If user exists but is not verified, redirect to verification screen
     if (user && !user.verified && mode === 'login') {
-      // Show alert about verification
       Alert.alert(
         'Email Not Verified',
         'Please verify your email before logging in. We\'ll redirect you to the verification screen.',
@@ -47,7 +61,7 @@ export default function AuthScreen() {
             text: 'OK',
             onPress: () => {
               router.push({
-                pathname: '/auth',
+                pathname: '/verification',
                 params: { email: user.email }
               });
             }
@@ -64,17 +78,6 @@ export default function AuthScreen() {
     }
   }, [storeError]);
 
-  // Update local error state when login, register, or reset errors change
-  useEffect(() => {
-    if (mode === 'login' && loginError) {
-      setLocalError(loginError);
-    } else if (mode === 'register' && registerError) {
-      setLocalError(registerError);
-    } else if (resetError) {
-      setLocalError(resetError);
-    }
-  }, [loginError, registerError, resetError, mode]);
-
   const toggleMode = () => {
     setMode(mode === 'login' ? 'register' : 'login');
     // Clear fields and errors when toggling
@@ -90,48 +93,60 @@ export default function AuthScreen() {
 
   const handleSubmit = async () => {
     setLocalError(null);
+    setIsSubmitting(true);
     
     try {
       if (mode === 'login') {
         if (!validateEmail(email)) {
           setLocalError('Please enter a valid email address');
+          setIsSubmitting(false);
           return;
         }
         
         if (password.length < 6) {
           setLocalError('Password must be at least 6 characters');
+          setIsSubmitting(false);
           return;
         }
         
-        await loginUser({ email, password });
+        // Use the login method from auth store
+        await login(email, password);
+        // Navigation will be handled by auth listener
+        
       } else {
+        // Registration flow
         if (!validateEmail(email)) {
           setLocalError('Please enter a valid email address');
+          setIsSubmitting(false);
           return;
         }
         
         if (password.length < 6) {
           setLocalError('Password must be at least 6 characters');
+          setIsSubmitting(false);
           return;
         }
         
         if (name.length < 2) {
           setLocalError('Please enter your full name');
+          setIsSubmitting(false);
           return;
         }
         
-        const success = await registeruser({ Name: name, email, password });
+        // Use the register method from auth store
+        await register(email, password, name);
         
-        // If registration was successful, navigate to verification screen
-        if (success) {
-          router.push({
-            pathname: '/verification',
-            params: { email }
-          });
-        }
+        // Navigate to verification screen
+        router.push({
+          pathname: '/verification',
+          params: { email }
+        });
       }
     } catch (error: any) {
+      console.error('Auth error:', error);
       setLocalError(error.message || 'An error occurred');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -173,12 +188,17 @@ export default function AuthScreen() {
           onPress: async () => {
             try {
               setLocalError(null);
-              const success = await sendPasswordResetEmail(email);
-              if (success) {
-                Alert.alert('Email Sent', 'Check your email for password reset instructions');
-              }
+              setIsSubmitting(true);
+              
+              // Use resetPassword from auth store
+              await resetPassword(email);
+              
+              Alert.alert('Email Sent', 'Check your email for password reset instructions');
             } catch (error: any) {
+              console.error('Password reset error:', error);
               setLocalError(error.message || 'Failed to send reset email');
+            } finally {
+              setIsSubmitting(false);
             }
           },
         },
@@ -203,7 +223,7 @@ export default function AuthScreen() {
           <View style={styles.content}>
             <View style={styles.logoContainer}>
               <Image
-                source={ require('@/assets/images/Logo.png')}
+                source={require('@/assets/images/Logo.png')}
                 style={styles.logo}
                 resizeMode="contain"
               />
@@ -258,8 +278,8 @@ export default function AuthScreen() {
                 onPress={handleSubmit}
                 variant="primary"
                 size="large"
-                disabled={!isFormValid() || isLoading}
-                isLoading={mode === 'login' ? loginLoading : registerLoading}
+                disabled={!isFormValid() || storeLoading || isSubmitting}
+                isLoading={isSubmitting || storeLoading}
                 style={styles.submitButton}
               />
 
@@ -280,12 +300,6 @@ export default function AuthScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-      {/* <View pointerEvents="none" style={styles.backgroundImage}>
-        <Image
-          source={{ uri: 'https://images.unsplash.com/photo-1579621970795-87facc2f976d?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60' }}
-          style={{ width: '100%', height: '100%', resizeMode: 'contain' }}
-        />
-      </View> */}
     </LinearGradient>
   );
 }
@@ -347,7 +361,6 @@ const styles = StyleSheet.create({
     width: 80,
     top: 5,
     left: 3,
-    // height: 65,
     alignItems: 'center',
   },
   title: {
@@ -391,13 +404,5 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: 14,
     fontWeight: '600',
-  },
-  backgroundImage: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 200,
-    height: 200,
-    opacity: 0.1,
   },
 });

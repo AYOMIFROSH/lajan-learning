@@ -7,8 +7,8 @@ export interface User {
   password?: string
   avatar?: string;
   bio?: string; 
-  learningStyle: 'visual' | 'practical';
-  preferredTopics: string[];
+  learningStyle: 'visual' | 'practical' | null;
+    preferredTopics: string[];
   knowledgeLevel: number;
   points: number;
   streak: number;
@@ -18,7 +18,7 @@ export interface User {
   guardianEmail?: string;
   guardianConnected: boolean;
   createdAt: string;
-  lastActive: string;
+  lastActive: string | null;
 }
 
 export interface AuthState {

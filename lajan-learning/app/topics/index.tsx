@@ -21,6 +21,14 @@ export default function TopicsScreen() {
   const { progress } = useProgressStore();
   const { difficultyLevel, setDifficultyLevel } = useQuizStore();
 
+  useEffect(() => {
+    // Ensure progress is loaded from Firestore if needed
+    const { user, token } = require('@/store/auth-store').useAuthStore.getState();
+    if (user && token && !progress) {
+      useProgressStore.getState().initializeProgress(user.id, token);
+    }
+  }, [progress]);
+
   const handleTopicPress = (topic: typeof topics[0]) => {
     if (progress && progress.totalPoints >= topic.requiredPoints) {
       router.push(`/topics/${topic.id}`);
