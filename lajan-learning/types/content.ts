@@ -57,7 +57,7 @@ export interface Notification {
   type: 'lesson' | 'friend' | 'achievement' | 'offering' | 'guardian';
   read: boolean;
   createdAt: string;
-  referenceId?: string; // Added referenceId property
+  referenceId?: string; 
 }
 
 export interface Progress {

@@ -2,6 +2,7 @@ import firebase from '@react-native-firebase/app';
 import auth from '@react-native-firebase/auth';
 import firestore from '@react-native-firebase/firestore';
 import Constants from 'expo-constants';
+import storage from '@react-native-firebase/storage';
 
 // Type guard to check if the extra property exists
 const hasExtra = (obj: any): obj is { extra: Record<string, any> } => {
@@ -46,3 +47,5 @@ if (!firebase.apps.length) {
 export { firebase };
 export const firestoreDB = firestore();
 export const firebaseAuth = auth();
+export const firebaseStorage = storage();
+
