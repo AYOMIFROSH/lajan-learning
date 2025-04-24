@@ -75,10 +75,33 @@ export default function TopicDetailScreen() {
       const { token } = useAuthStore.getState();
       initializeProgress(user?.id || 'guest-user', token);
     }
-
-    // Find the topic and check if it's today's recommended topic
-    const foundTopic = topics.find(t => String(t.id).trim() === String(id).trim());
-
+  
+    // Enhanced topic search: try exact match first, then module title match
+    let foundTopic = topics.find(t => String(t.id).trim() === String(id).trim());
+    
+    // If not found by exact ID match, try case-insensitive title match
+    if (!foundTopic) {
+      foundTopic = topics.find(t => 
+        t.title.toLowerCase().includes(String(id).toLowerCase().trim())
+      );
+    }
+    
+    // If still not found, try to find a topic containing a module with matching title
+    if (!foundTopic) {
+      foundTopic = topics.find(t => 
+        t.modules.some(m => 
+          m.title.toLowerCase().includes(String(id).toLowerCase().trim())
+        )
+      );
+    }
+  
+    // If we found a topic and it's not the exact ID match, redirect to the correct topic
+    if (foundTopic && String(foundTopic.id).trim() !== String(id).trim()) {
+      console.log(`Redirecting from ${id} to correct topic ID: ${foundTopic.id}`);
+      router.replace(`/topics/${foundTopic.id}`);
+      return;
+    }
+  
     if (foundTopic) {
       setTopic(foundTopic);
       
@@ -92,7 +115,7 @@ export default function TopicDetailScreen() {
         setIsRecommended(recommended);
       }
     }
-  }, [id, user, progress, initializeProgress]);
+  }, [id, user, progress, initializeProgress, router]);
 
   const handleModulePress = (moduleId: string) => {
     if (!topic) return;

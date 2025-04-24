@@ -8,7 +8,7 @@ export interface Module {
   keyPoints?: string[]; 
   quizQuestions?: QuizQuestion[];
   difficulty?: 'beginner' | 'intermediate' | 'advanced';
-  image?: string;
+  image?: string; 
 }
 
 // Define the quiz question interface
@@ -31,10 +31,8 @@ export interface Topic {
   modules: Module[];
   prerequisites?: string[];
   level: 'beginner' | 'intermediate' | 'advanced';
-  requiredPoints: number; // Add this property
+  requiredPoints: number;
 }
-
-// Add this to your mocks/topics.tsx file
 
 // Helper function to enhance topics with key points
 export function enhanceTopicsWithKeyPoints(): void {
@@ -246,6 +244,7 @@ export const topics: Topic[] = [
       }
     ]
   },
+  // Rest of the topics array remains the same
   {
     id: 'investing',
     title: 'Investing Fundamentals',
@@ -543,4 +542,3 @@ export const topics: Topic[] = [
     ]
   }
 ];
-

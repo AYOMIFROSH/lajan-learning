@@ -51,25 +51,11 @@ export default function AuthScreen() {
   useEffect(() => {
     if (!mounted) return;
     
-    // If user exists but is not verified, redirect to verification screen
-    if (user && !user.verified && mode === 'login') {
-      Alert.alert(
-        'Email Not Verified',
-        'Please verify your email before logging in. We\'ll redirect you to the verification screen.',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              router.push({
-                pathname: '/verification',
-                params: { email: user.email }
-              });
-            }
-          }
-        ]
-      );
+    // If user is authenticated, redirect to main app
+    if (isAuthenticated && user) {
+      router.replace('/(tabs)');
     }
-  }, [isAuthenticated, user, router, mounted, mode]);
+  }, [isAuthenticated, user, router, mounted]);
 
   // Update local error state when store error changes
   useEffect(() => {
@@ -136,11 +122,8 @@ export default function AuthScreen() {
         // Use the register method from auth store
         await register(email, password, name);
         
-        // Navigate to verification screen
-        router.push({
-          pathname: '/verification',
-          params: { email }
-        });
+        // Navigate directly to main app instead of verification
+        router.replace('/(tabs)');
       }
     } catch (error: any) {
       console.error('Auth error:', error);

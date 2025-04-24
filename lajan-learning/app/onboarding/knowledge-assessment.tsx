@@ -10,7 +10,7 @@ import { Star } from 'lucide-react-native';
 
 export default function KnowledgeAssessmentScreen() {
   const router = useRouter();
-  const { user, setKnowledgeLevel } = useAuthStore();
+  const { user, setKnowledgeLevel, setOnboardingComplete } = useAuthStore();
   const { initializeProgress } = useProgressStore();
   
   const [selectedLevel, setSelectedLevel] = useState<number | null>(null);
@@ -38,31 +38,34 @@ export default function KnowledgeAssessmentScreen() {
     setSelectedLevel(level);
   };
   
-  // In KnowledgeAssessmentScreen.tsx
-const handleContinue = async () => {
-  if (selectedLevel !== null) {
-    setIsLoading(true);
-    
-    try {
-      // Save knowledge level to auth store - this should set isOnboardingComplete to true
-      await setKnowledgeLevel(selectedLevel);
+  const handleContinue = async () => {
+    if (selectedLevel !== null) {
+      setIsLoading(true);
       
-      // Make sure we have a user ID to initialize progress with
-      const userId = user?.id || '1';
-      const userToken = useAuthStore.getState().token; // Retrieve token from auth store
-      
-      // Initialize the progress for this user
-      initializeProgress(userId, userToken || null);
-      
-      // Don't navigate here - let AuthBridge handle it based on isOnboardingComplete
-      console.log("Knowledge level set, onboarding complete");
-    } catch (error) {
-      console.error('Error during knowledge assessment:', error);
-    } finally {
-      setIsLoading(false);
+      try {
+        // Save knowledge level to auth store
+        await setKnowledgeLevel(selectedLevel);
+        
+        // Make sure we have a user ID to initialize progress with
+        const userId = user?.id || '1';
+        const userToken = useAuthStore.getState().token;
+        
+        // Initialize the progress for this user
+        initializeProgress(userId, userToken || null);
+        
+        // Explicitly set onboarding complete flag
+        setOnboardingComplete(true);
+        
+        // Force navigation to the main app tabs
+        console.log("Knowledge level set, navigating to main app");
+        router.replace('/(tabs)');
+      } catch (error) {
+        console.error('Error during knowledge assessment:', error);
+      } finally {
+        setIsLoading(false);
+      }
     }
-  }
-};
+  };
   
   const renderStars = (count: number, filled: number) => {
     return Array(count).fill(0).map((_, index) => (
@@ -128,11 +131,11 @@ const handleContinue = async () => {
         </View>
       </ScrollView>
       
-      <Image
+      {/* <Image
         source={{ uri: 'https://images.unsplash.com/photo-1554224155-6726b3ff858f?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60' }}
         style={styles.backgroundImage}
         resizeMode="contain"
-      />
+      /> */}
     </LinearGradient>
   );
 }

@@ -4,7 +4,7 @@ import LandingScreen from '@/components/landingScreen';
 
 export default function Index() {
   const { initializeAuthListener } = useAuthStore();
-
+  
   // Initialize Firebase auth listener when app loads
   useEffect(() => {
     const unsubscribe = initializeAuthListener();

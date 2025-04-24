@@ -10,7 +10,6 @@ import { firebase, firebaseAuth, firestoreDB, firebaseStorage } from '@/firebase
 interface AuthStore extends AuthState {
   // Authentication
   login: (email: string, password: string) => Promise<void>;
-  socialLogin: (provider: 'google' | 'apple') => Promise<void>;
   logout: () => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<{ user: User; token: string; }>;
   resetPassword: (email: string) => Promise<void>;
@@ -50,7 +49,7 @@ const mapFirebaseUser = async (firebaseUser: any): Promise<User> => {
       email: firebaseUser.email || '',
       name: firebaseUser.displayName || userData.name || '',
       avatar: firebaseUser.photoURL || userData.avatar || '',
-      verified: firebaseUser.emailVerified,
+      verified: true, // Always set verified to true
       role: userData.role || 'user',
       learningStyle: userData.learningStyle,
       preferredTopics: userData.preferredTopics || [],
@@ -73,7 +72,7 @@ const mapFirebaseUser = async (firebaseUser: any): Promise<User> => {
       email: firebaseUser.email || '',
       name: firebaseUser.displayName || '',
       avatar: firebaseUser.photoURL || '',
-      verified: firebaseUser.emailVerified,
+      verified: true, // Always set verified to true
       role: 'user',
       points: 0,
       completedLessons: [],
@@ -156,7 +155,7 @@ export const useAuthStore = create<AuthStore>()(
               set({
                 user,
                 token,
-                isAuthenticated: firebaseUser.emailVerified,
+                isAuthenticated: true, // Always set authenticated to true
                 isLoading: false,
                 error: null,
                 isOnboardingComplete: userHasCompletedOnboarding,
@@ -205,17 +204,8 @@ export const useAuthStore = create<AuthStore>()(
           // Sign in with Firebase
           const userCredential = await firebaseAuth.signInWithEmailAndPassword(email, password);
           const firebaseUser = userCredential.user;
-
-          // If email not verified, send verification email again
-          if (!firebaseUser.emailVerified) {
-            await firebaseUser.sendEmailVerification();
-            set({
-              error: 'Please verify your email before logging in',
-              isLoading: false,
-              autoLoginAttempted: true
-            });
-            return;
-          }
+          
+          // No email verification check - all users are considered verified
 
           // Get ID token for API calls
           const token = await firebaseUser.getIdToken();
@@ -331,18 +321,18 @@ export const useAuthStore = create<AuthStore>()(
           // Update profile with displayName
           await firebaseUser.updateProfile({ displayName: name });
 
-          // Create user document in Firestore
+          // Create user document in Firestore with verified set to true
           await firestoreDB.collection('users').doc(firebaseUser.uid).set({
             email,
             name,
             role: 'user',
             points: 0,
+            verified: true, // Set verified to true by default
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
           });
 
-          // Send verification email
-          await firebaseUser.sendEmailVerification();
+          // No email verification needed
 
           // Get ID token
           const token = await firebaseUser.getIdToken();
@@ -350,12 +340,11 @@ export const useAuthStore = create<AuthStore>()(
           // Map Firebase user to our User type
           const user = await mapFirebaseUser(firebaseUser);
 
-          // For registration, store the user data but don't set authenticated
-          // until they verify their email
+          // Set user as authenticated immediately
           set({
             user,
             token,
-            isAuthenticated: false,
+            isAuthenticated: true, // Set authenticated to true immediately
             isLoading: false,
             error: null,
             autoLoginAttempted: true,
@@ -409,11 +398,6 @@ export const useAuthStore = create<AuthStore>()(
         }
       },
 
-      // Placeholder stubs for other methods
-      socialLogin: async () => {
-        throw new Error('Social login not yet implemented for React Native');
-      },
-
       // Implementation for setLearningStyle
       setLearningStyle: async (style: 'visual' | 'practical') => {
         const { user } = get();
@@ -431,15 +415,25 @@ export const useAuthStore = create<AuthStore>()(
           });
 
           // Update local state
+          const updatedUser = {
+            ...user,
+            learningStyle: style
+          };
+          
+          // Check if onboarding is now complete
+          const onboardingComplete = !!(
+            style && 
+            updatedUser.preferredTopics?.length > 0 &&
+            updatedUser.knowledgeLevel !== undefined
+          );
+
           set({
-            user: {
-              ...user,
-              learningStyle: style
-            },
-            isLoading: false
+            user: updatedUser,
+            isLoading: false,
+            isOnboardingComplete: onboardingComplete
           });
 
-          console.log(`Learning style set to ${style}`);
+          console.log(`Learning style set to ${style}, onboarding complete: ${onboardingComplete}`);
           return;
         } catch (error: any) {
           console.error('Error setting learning style:', error);
@@ -468,15 +462,25 @@ export const useAuthStore = create<AuthStore>()(
           });
 
           // Update local state
+          const updatedUser = {
+            ...user,
+            preferredTopics: topics
+          };
+          
+          // Check if onboarding is now complete
+          const onboardingComplete = !!(
+            updatedUser.learningStyle && 
+            topics.length > 0 &&
+            updatedUser.knowledgeLevel !== undefined
+          );
+
           set({
-            user: {
-              ...user,
-              preferredTopics: topics
-            },
-            isLoading: false
+            user: updatedUser,
+            isLoading: false,
+            isOnboardingComplete: onboardingComplete
           });
 
-          console.log(`Preferred topics set: ${topics.join(', ')}`);
+          console.log(`Preferred topics set: ${topics.join(', ')}, onboarding complete: ${onboardingComplete}`);
           return;
         } catch (error: any) {
           console.error('Error setting preferred topics:', error);
@@ -487,6 +491,8 @@ export const useAuthStore = create<AuthStore>()(
           throw error;
         }
       },
+
+      // Implementation for setKnowledgeLevel
       setKnowledgeLevel: async (level: number) => {
         const { user } = get();
         set({ isLoading: true, error: null });
@@ -580,7 +586,7 @@ export const useAuthStore = create<AuthStore>()(
         }
       },
 
-      // Implementation for uploadAvatar
+      // Simplified uploadAvatar without using Firebase Storage
       uploadAvatar: async (file: FormData) => {
         const { user } = get();
         set({ isLoading: true, error: null });
@@ -590,54 +596,18 @@ export const useAuthStore = create<AuthStore>()(
             throw new Error('No authenticated user found');
           }
 
-          // Get file URI from the FormData
-          // @ts-ignore - FormData in React Native has a different structure
-          const fileInfo = file._parts[0][1];
-          const fileUri = fileInfo.uri;
-
-          if (!fileUri) {
-            throw new Error('Invalid file data');
-          }
-
-          // Upload to Firebase Storage
-          const fileExtension = fileUri.split('.').pop();
-          const fileName = `avatars/${user.id}/profile.${fileExtension}`;
-          const storageRef = firebaseStorage.ref(fileName);
-
-          // Upload the file
-          await storageRef.putFile(fileUri);
-
-          // Get the download URL
-          const downloadURL = await storageRef.getDownloadURL();
-
-          // Update Firebase Auth profile
-          if (firebaseAuth.currentUser) {
-            await firebaseAuth.currentUser.updateProfile({
-              photoURL: downloadURL
-            });
-          }
-
-          // Update in Firestore
-          await firestoreDB.collection('users').doc(user.id).update({
-            avatar: downloadURL,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          });
-
-          // Update local state
-          set({
-            user: {
-              ...user,
-              avatar: downloadURL
-            },
-            isLoading: false
-          });
-
-          console.log('Avatar uploaded successfully');
+          // For now, we'll just log the request since we're not using Firebase Storage
+          console.log('Avatar upload requested - Storage functionality disabled');
+          
+          // Just return without actually uploading
+          set({ isLoading: false });
+          
+          // You can implement a different avatar upload approach later if needed
           return;
         } catch (error: any) {
-          console.error('Error uploading avatar:', error);
+          console.error('Error handling avatar:', error);
           set({
-            error: error.message || 'Failed to upload avatar',
+            error: error.message || 'Failed to handle avatar',
             isLoading: false
           });
           throw error;

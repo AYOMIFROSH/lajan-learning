@@ -34,8 +34,23 @@ const TermDetailScreen = () => {
   const [feedbackGiven, setFeedbackGiven] = useState<'helpful' | 'not-helpful' | null>(null);
   
   useEffect(() => {
-    // Find the term in our financial terms data
-    const foundTerm = financialTerms.find(item => item.id === id);
+    // Find the term in our financial terms data with enhanced search
+    let foundTerm = financialTerms.find(item => item.id === id);
+    
+    // If not found by ID, try by exact term match
+    if (!foundTerm) {
+      foundTerm = financialTerms.find(item => 
+        item.term.toLowerCase() === String(id).toLowerCase()
+      );
+    }
+    
+    // If still not found, try by partial term match
+    if (!foundTerm) {
+      foundTerm = financialTerms.find(item => 
+        item.term.toLowerCase().includes(String(id).toLowerCase())
+      );
+    }
+    
     if (foundTerm) {
       setTerm(foundTerm);
       

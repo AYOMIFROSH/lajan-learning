@@ -1,4 +1,3 @@
-// services/openai-service.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_KEY = 'sk-p'; // Replace with your actual OpenAI API key

@@ -200,7 +200,7 @@ export default function ProfileScreen() {
       <ScrollView style={styles.container}>
         <View style={styles.header}>
           <View style={styles.profileInfo}>
-            <View style={styles.avatarContainer}>
+            {/* <View style={styles.avatarContainer}>
               <Image
                 source={{
                   uri: user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60'
@@ -213,7 +213,7 @@ export default function ProfileScreen() {
               >
                 <Edit size={16} color={colors.light} />
               </TouchableOpacity>
-            </View>
+            </View> */}
 
             <View style={styles.userInfo}>
               <Text style={styles.userName}>{user?.name || 'User'}</Text>
