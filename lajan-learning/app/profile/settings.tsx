@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -8,10 +8,12 @@ import {
   Switch,
   TouchableOpacity,
   Alert,
-  Platform
+  Platform,
+  ActivityIndicator
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/auth-store';
+import { useProgressStore } from '@/store/progress-store';
 import colors from '@/constants/colors';
 import Button from '@/components/Button';
 import { 
@@ -23,21 +25,171 @@ import {
   FileText, 
   Trash2,
   ChevronRight,
-  LogOut
+  LogOut,
+  Settings as SettingsIcon
 } from 'lucide-react-native';
+import { firebase, firestoreDB } from '@/firebase/config';
+import * as LocalAuthentication from 'expo-local-authentication';
+
+// Note: To use this, you need to install the expo-notifications package:
+// npx expo install expo-notifications
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { logout } = useAuthStore();
+  const { user, logout } = useAuthStore();
+  const { resetProgress } = useProgressStore();
   
   const [notifications, setNotifications] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
   const [biometricLogin, setBiometricLogin] = useState(true);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [loading, setLoading] = useState(true);
+  
+  // Fetch user settings from Firestore
+  useEffect(() => {
+    const fetchUserSettings = async () => {
+      if (!user?.id) {
+        setLoading(false);
+        return;
+      }
+      
+      try {
+        // Check if biometric authentication is available
+        const biometricSupport = await LocalAuthentication.hasHardwareAsync();
+        setBiometricAvailable(biometricSupport);
+        
+        // Get user settings from Firestore
+        const userSettingsDoc = await firestoreDB.collection('user_settings').doc(user.id).get();
+        
+        if (userSettingsDoc.exists) {
+          const settingsData = userSettingsDoc.data();
+          setNotifications(settingsData?.pushNotifications ?? true);
+          setDarkMode(settingsData?.darkMode ?? false);
+          setBiometricLogin(settingsData?.biometricLogin ?? biometricSupport);
+        } else {
+          // Create default settings document if it doesn't exist
+          const defaultSettings = {
+            pushNotifications: true,
+            darkMode: false,
+            biometricLogin: biometricSupport,
+            language: 'en'
+          };
+          
+          await firestoreDB.collection('user_settings').doc(user.id).set(defaultSettings);
+        }
+      } catch (error) {
+        console.error('Error fetching user settings:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchUserSettings();
+  }, [user?.id]);
+  
+  // Handle notification toggle
+  const handleNotificationToggle = async (value: boolean) => {
+    setNotifications(value);
+    
+    if (!user?.id) return;
+    
+    try {
+      // Update Firestore setting
+      await firestoreDB.collection('user_settings').doc(user.id).update({
+        pushNotifications: value
+      });
+      
+      if (value) {
+        // For a real implementation, you would request permissions here
+        // Since expo-notifications isn't installed, we'll just simulate this
+        
+        // Simulate permission request with regular Alert
+        const permissionGranted = await new Promise<boolean>(resolve => {
+          Alert.alert(
+            'Allow Notifications',
+            'Would you like to receive notifications for module completions and achievements?',
+            [
+              { text: 'Don\'t Allow', onPress: () => resolve(false) },
+              { text: 'Allow', onPress: () => resolve(true) }
+            ]
+          );
+        });
+        
+        if (!permissionGranted) {
+          // If permission denied, revert the toggle
+          setNotifications(false);
+          await firestoreDB.collection('user_settings').doc(user.id).update({
+            pushNotifications: false
+          });
+          
+          Alert.alert(
+            'Permission Required',
+            'Please enable notifications in your device settings to receive updates.',
+            [{ text: 'OK' }]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('Error updating notification settings:', error);
+      // Revert toggle on error
+      setNotifications(!value);
+    }
+  };
+  
+  // Handle dark mode toggle
+  const handleDarkModeToggle = async (value: boolean) => {
+    setDarkMode(value);
+    
+    if (!user?.id) return;
+    
+    try {
+      // Update Firestore setting
+      await firestoreDB.collection('user_settings').doc(user.id).update({
+        darkMode: value
+      });
+      
+      // In a real app, you would apply the theme change here
+      // For now, just log it
+      console.log('Dark mode:', value ? 'enabled' : 'disabled');
+    } catch (error) {
+      console.error('Error updating dark mode settings:', error);
+      // Revert toggle on error
+      setDarkMode(!value);
+    }
+  };
+  
+  // Handle biometric login toggle
+  const handleBiometricToggle = async (value: boolean) => {
+    if (!biometricAvailable) {
+      Alert.alert(
+        'Not Available',
+        'Biometric authentication is not available on this device.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    
+    setBiometricLogin(value);
+    
+    if (!user?.id) return;
+    
+    try {
+      // Update Firestore setting
+      await firestoreDB.collection('user_settings').doc(user.id).update({
+        biometricLogin: value
+      });
+    } catch (error) {
+      console.error('Error updating biometric settings:', error);
+      // Revert toggle on error
+      setBiometricLogin(!value);
+    }
+  };
   
   const handleLogout = async () => {
     try {
       await logout();
-      router.replace('/');
+      resetProgress();
+      router.replace('/auth');
     } catch (error) {
       console.error('Logout error:', error);
       Alert.alert('Logout Failed', 'There was a problem logging out. Please try again.');
@@ -73,12 +225,61 @@ export default function SettingsScreen() {
         },
         {
           text: "Delete",
-          onPress: () => {
-            Alert.alert(
-              "Account Deletion",
-              "This feature is not available in the demo version.",
-              [{ text: "OK" }]
-            );
+          onPress: async () => {
+            if (!user?.id) return;
+            
+            try {
+              setLoading(true);
+              
+              // Delete user data from Firestore collections
+              const batch = firestoreDB.batch();
+              
+              // Delete user settings
+              batch.delete(firestoreDB.collection('user_settings').doc(user.id));
+              
+              // Delete user progress
+              batch.delete(firestoreDB.collection('progress').doc(user.id));
+              
+              // Delete user notifications
+              const notificationsRef = await firestoreDB.collection('notifications')
+                .where('userId', '==', user.id)
+                .get();
+              
+              notificationsRef.forEach(doc => {
+                batch.delete(doc.ref);
+              });
+              
+              // Delete point history
+              const pointHistoryRef = await firestoreDB.collection('point_history')
+                .where('userId', '==', user.id)
+                .get();
+              
+              pointHistoryRef.forEach(doc => {
+                batch.delete(doc.ref);
+              });
+              
+              // Commit the batch operation
+              await batch.commit();
+              
+              // Delete Firebase Auth user
+              const currentUser = firebase.auth().currentUser;
+              if (currentUser) {
+                await currentUser.delete();
+              }
+              
+              // Reset local state and navigate to auth
+              await logout();
+              resetProgress();
+              router.replace('/auth');
+            } catch (error) {
+              console.error('Error deleting account:', error);
+              Alert.alert(
+                "Error",
+                "There was a problem deleting your account. Please try again.",
+                [{ text: "OK" }]
+              );
+              setLoading(false);
+            }
           },
           style: "destructive"
         }
@@ -89,9 +290,33 @@ export default function SettingsScreen() {
   const handleLanguagePress = () => {
     Alert.alert(
       "Language Settings",
-      "This feature is not available in the demo version.",
-      [{ text: "OK" }]
+      "Select your preferred language",
+      [
+        { text: "English", onPress: () => updateLanguage('en') },
+        { text: "Spanish", onPress: () => updateLanguage('es') },
+        { text: "French", onPress: () => updateLanguage('fr') },
+        { text: "Cancel", style: "cancel" }
+      ]
     );
+  };
+  
+  const updateLanguage = async (language: string) => {
+    if (!user?.id) return;
+    
+    try {
+      await firestoreDB.collection('user_settings').doc(user.id).update({
+        language
+      });
+      
+      Alert.alert(
+        "Language Updated",
+        "You'll need to restart the app for all changes to take effect.",
+        [{ text: "OK" }]
+      );
+    } catch (error) {
+      console.error('Error updating language:', error);
+      Alert.alert("Error", "Failed to update language. Please try again.");
+    }
   };
   
   const handleHelpPress = () => {
@@ -105,6 +330,25 @@ export default function SettingsScreen() {
   const handleTermsPress = () => {
     router.push('/profile/terms');
   };
+  
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <Stack.Screen 
+          options={{ 
+            title: 'Settings',
+            headerTitleStyle: {
+              fontWeight: 'bold',
+            },
+          }} 
+        />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading settings...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
   
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -133,7 +377,7 @@ export default function SettingsScreen() {
             </View>
             <Switch
               value={notifications}
-              onValueChange={setNotifications}
+              onValueChange={handleNotificationToggle}
               trackColor={{ false: colors.gray, true: `${colors.primary}80` }}
               thumbColor={notifications ? colors.primary : colors.light}
               ios_backgroundColor={colors.gray}
@@ -152,7 +396,7 @@ export default function SettingsScreen() {
             </View>
             <Switch
               value={darkMode}
-              onValueChange={setDarkMode}
+              onValueChange={handleDarkModeToggle}
               trackColor={{ false: colors.gray, true: `${colors.secondary}80` }}
               thumbColor={darkMode ? colors.secondary : colors.light}
               ios_backgroundColor={colors.gray}
@@ -191,10 +435,11 @@ export default function SettingsScreen() {
             </View>
             <Switch
               value={biometricLogin}
-              onValueChange={setBiometricLogin}
+              onValueChange={handleBiometricToggle}
               trackColor={{ false: colors.gray, true: `${colors.success}80` }}
               thumbColor={biometricLogin ? colors.success : colors.light}
               ios_backgroundColor={colors.gray}
+              disabled={!biometricAvailable}
             />
           </View>
         </View>
@@ -276,6 +521,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: colors.darkGray,
   },
   section: {
     marginBottom: 24,

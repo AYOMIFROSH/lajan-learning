@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Stack } from 'expo-router';
 import { useAuthStore } from '@/store/auth-store';
+import { useProgressStore } from '@/store/progress-store';
 import colors from '@/constants/colors';
 import { Platform } from 'react-native';
 import { 
@@ -20,13 +21,7 @@ import {
   Users,
   Filter
 } from 'lucide-react-native';
-
-// API base URL
-const API_BASE_URL = Platform.select({
-  ios: 'http://172.20.10.3:3000/api',
-  android: 'http://10.0.2.2:3000/api',
-  web: 'http://localhost:3000/api',
-}) || 'http://localhost:3000/api';
+import { firebase, firestoreDB } from '@/firebase/config';
 
 // Define user type
 interface LeaderboardUser {
@@ -41,19 +36,20 @@ interface LeaderboardUser {
 type LeaderboardFilter = 'all' | 'friends' | 'weekly';
 
 export default function LeaderboardScreen() {
-  const { user, token } = useAuthStore();
+  const { user } = useAuthStore();
+  const { progress } = useProgressStore();
   const [filter, setFilter] = useState<LeaderboardFilter>('all');
   const [leaderboardData, setLeaderboardData] = useState<LeaderboardUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Fetch leaderboard data from server
+  // Fetch leaderboard data from Firestore
   useEffect(() => {
     fetchLeaderboardData();
-  }, [filter, token]);
+  }, [filter, user?.id]);
 
   const fetchLeaderboardData = async () => {
-    if (!token) {
+    if (!user?.id) {
       setError('Authentication required');
       setLoading(false);
       return;
@@ -63,43 +59,101 @@ export default function LeaderboardScreen() {
       setLoading(true);
       setError(null);
       
-      // Determine endpoint based on filter
-      let endpoint = `${API_BASE_URL}/leaderboard`;
+      // Different queries based on filter type
+      let usersRef;
+      
       if (filter === 'weekly') {
-        endpoint = `${API_BASE_URL}/leaderboard/weekly`;
+        // Get users active in the last week (7 days)
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+        
+        usersRef = firestoreDB.collection('users')
+          .where('lastActive', '>=', oneWeekAgo.toISOString())
+          .orderBy('lastActive', 'desc')
+          .orderBy('points', 'desc')
+          .limit(50);
       } else if (filter === 'friends') {
-        endpoint = `${API_BASE_URL}/leaderboard/friends`;
-      }
-      
-      const response = await fetch(endpoint, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+        // For friends filter, we need to get user's friends
+        // If you don't have a friends system yet, we can use a basic one
+        const userDoc = await firestoreDB.collection('users').doc(user.id).get();
+        const userData = userDoc.data();
+        const friendIds = userData?.friends || [];
+        
+        if (friendIds.length > 0) {
+          usersRef = firestoreDB.collection('users')
+            .where(firebase.firestore.FieldPath.documentId(), 'in', friendIds)
+            .orderBy('points', 'desc');
+        } else {
+          // If no friends, return empty array
+          setLeaderboardData([]);
+          setLoading(false);
+          return;
         }
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch leaderboard');
+      } else {
+        // All time - simple points sorting
+        usersRef = firestoreDB.collection('users')
+          .orderBy('points', 'desc')
+          .limit(50);
       }
-
-      const data = await response.json();
       
-      // Map response data to match our component's requirements
-      const formattedData: LeaderboardUser[] = data.users.map((user: any) => ({
-        id: user.id || user._id,
-        name: user.name,
-        points: user.points || 0,
-        avatar: user.avatar || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(user.name),
-        streak: user.streak || 0,
-        topicsCompleted: user.completedLessons?.length || 0
-      }));
+      const snapshot = await usersRef.get();
       
-      setLeaderboardData(formattedData);
+      if (snapshot.empty) {
+        setLeaderboardData([]);
+        setLoading(false);
+        return;
+      }
+      
+      // Map Firestore data to our leaderboard format
+      const users: LeaderboardUser[] = [];
+      
+      snapshot.forEach(doc => {
+        const userData = doc.data();
+        users.push({
+          id: doc.id,
+          name: userData.name || 'User',
+          points: userData.points || 0,
+          avatar: userData.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name || 'User')}`,
+          streak: userData.streak || 0,
+          topicsCompleted: userData.completedLessons?.length || 0
+        });
+      });
+      
+      // Make sure current user is included if not already
+      if (!users.some(leaderboardUser => leaderboardUser.id === user.id)) {
+        // Add current user with correct data
+        users.push({
+          id: user.id,
+          name: user.name || 'You',
+          points: user.points || 0,
+          avatar: user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || 'You')}`,
+          streak: user.streak || 0,
+          topicsCompleted: user.completedLessons?.length || 0
+        });
+        
+        // Re-sort by points
+        users.sort((a, b) => b.points - a.points);
+      }
+      
+      setLeaderboardData(users);
     } catch (err) {
       console.error('Error fetching leaderboard:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch leaderboard');
+      
+      // Create fallback data with current user
+      if (user) {
+        const fallbackData: LeaderboardUser[] = [
+          {
+            id: user.id,
+            name: user.name || 'You',
+            points: user.points || 0,
+            avatar: user.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || 'You')}`,
+            streak: user.streak || 0,
+            topicsCompleted: user.completedLessons?.length || 0
+          }
+        ];
+        setLeaderboardData(fallbackData);
+      }
     } finally {
       setLoading(false);
     }
@@ -109,7 +163,7 @@ export default function LeaderboardScreen() {
   const userPosition = leaderboardData.findIndex(item => item.id === user?.id) + 1 || 0;
   
   const getFilteredData = () => {
-    // Filtering is now handled by the server
+    // Return available data (filtering already handled in fetch)
     return leaderboardData;
   };
   
@@ -281,7 +335,7 @@ export default function LeaderboardScreen() {
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
       <Text style={styles.emptyText}>
-        {error ? error : 'No leaderboard data available'}
+        {error ? error : filter === 'friends' ? 'No friends added yet' : 'No leaderboard data available'}
       </Text>
       {error && (
         <TouchableOpacity 
