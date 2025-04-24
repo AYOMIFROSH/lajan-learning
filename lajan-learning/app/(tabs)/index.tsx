@@ -218,11 +218,11 @@ export default function HomeScreen() {
                     </Text>
                   </View>
 
-                  <Image
+                  {/* <Image
                     source={{ uri: 'https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60' }}
                     style={styles.todayLessonImage}
                     resizeMode="contain"
-                  />
+                  /> */}
                 </View>
               ) : (
                 <View style={styles.todayLessonContent}>
@@ -238,11 +238,11 @@ export default function HomeScreen() {
                     </Text>
                   </View>
 
-                  <Image
+                  {/* <Image
                     source={{ uri: 'https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60' }}
                     style={styles.todayLessonImage}
                     resizeMode="contain"
-                  />
+                  /> */}
                 </View>
               )}
 

@@ -8,7 +8,9 @@ import {
   SafeAreaView,
   ActivityIndicator,
   RefreshControl,
-  Alert
+  Alert,
+  KeyboardAvoidingView,
+  Platform
 } from 'react-native';
 import colors from '@/constants/colors';
 import NotificationItem from '@/components/NotificationItem';
@@ -17,7 +19,6 @@ import { Bell, Users, Share2 } from 'lucide-react-native';
 import { useAuthStore } from '@/store/auth-store';
 import { useProgressStore } from '@/store/progress-store';
 import { useRouter } from 'expo-router';
-import { Platform } from 'react-native';
 import { firebase, firestoreDB } from '@/firebase/config';
 
 import { Notification } from '@/types/content';
@@ -88,6 +89,7 @@ export default function NotificationsScreen() {
   
   // Generate initial notifications based on user progress
   const generateInitialNotifications = (): Notification[] => {
+    // Same implementation as before
     const initialNotifications: Notification[] = [];
     const now = new Date();
     
@@ -206,6 +208,7 @@ export default function NotificationsScreen() {
   };
   
   const handleNotificationPress = async (notification: Notification) => {
+    // Same implementation as before
     if (!user || !user.id) return;
     
     try {
@@ -252,6 +255,7 @@ export default function NotificationsScreen() {
   };
   
   const handleMarkAllAsRead = async () => {
+    // Same implementation as before
     if (!user || !user.id) return;
     
     try {
@@ -313,7 +317,7 @@ export default function NotificationsScreen() {
   };
   
   const renderNotificationsTab = () => (
-    <View style={{ flex: 1 }}>
+    <View style={styles.notificationsTabContainer}>
       {notifications.length > 0 && (
         <View style={styles.notificationActions}>
           <TouchableOpacity 
@@ -331,48 +335,37 @@ export default function NotificationsScreen() {
         </View>
       )}
       
-      <ScrollView 
-        style={styles.tabContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handleRefresh}
-            colors={[colors.primary]}
+      {loading && !refreshing ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      ) : error ? (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity 
+            style={styles.retryButton}
+            onPress={fetchNotifications}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : notifications.length > 0 ? (
+        notifications.map(notification => (
+          <NotificationItem
+            key={notification.id}
+            notification={notification}
+            onPress={handleNotificationPress}
           />
-        }
-      >
-        {loading && !refreshing ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-          </View>
-        ) : error ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-            <TouchableOpacity 
-              style={styles.retryButton}
-              onPress={fetchNotifications}
-            >
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          </View>
-        ) : notifications.length > 0 ? (
-          notifications.map(notification => (
-            <NotificationItem
-              key={notification.id}
-              notification={notification}
-              onPress={handleNotificationPress}
-            />
-          ))
-        ) : (
-          <View style={styles.emptyState}>
-            <Bell size={48} color={colors.darkGray} />
-            <Text style={styles.emptyStateTitle}>No Notifications</Text>
-            <Text style={styles.emptyStateText}>
-              You don't have any notifications yet. Complete lessons to get updates!
-            </Text>
-          </View>
-        )}
-      </ScrollView>
+        ))
+      ) : (
+        <View style={styles.emptyState}>
+          <Bell size={48} color={colors.darkGray} />
+          <Text style={styles.emptyStateTitle}>No Notifications</Text>
+          <Text style={styles.emptyStateText}>
+            You don't have any notifications yet. Complete lessons to get updates!
+          </Text>
+        </View>
+      )}
     </View>
   );
   
@@ -442,7 +435,11 @@ export default function NotificationsScreen() {
   
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <KeyboardAvoidingView 
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
+      >
         <Text style={styles.title}>Activity</Text>
         
         <View style={styles.tabsContainer}>
@@ -489,8 +486,20 @@ export default function NotificationsScreen() {
           </TouchableOpacity>
         </View>
         
-        {activeTab === 'notifications' ? renderNotificationsTab() : renderMultiplayerTab()}
-      </View>
+        <ScrollView 
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollViewContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              colors={[colors.primary]}
+            />
+          }
+        >
+          {activeTab === 'notifications' ? renderNotificationsTab() : renderMultiplayerTab()}
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -502,20 +511,22 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    padding: 16,
   },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: colors.dark,
     marginBottom: 24,
+    paddingHorizontal: 16,
+    paddingTop: 16,
   },
   tabsContainer: {
     flexDirection: 'row',
     backgroundColor: colors.gray,
     borderRadius: 12,
     padding: 4,
-    marginBottom: 24,
+    marginBottom: 16,
+    marginHorizontal: 16,
   },
   tab: {
     flex: 1,
@@ -541,6 +552,16 @@ const styles = StyleSheet.create({
   activeTabText: {
     color: colors.primary,
     fontWeight: '500',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollViewContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 24, // Add padding at the bottom for better scrolling
+  },
+  notificationsTabContainer: {
+    paddingTop: 8,
   },
   tabContent: {
     flex: 1,
@@ -588,7 +609,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   emptyState: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
@@ -608,7 +628,7 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   multiplayerContainer: {
-    flex: 1,
+    paddingTop: 8,
   },
   multiplayerCard: {
     backgroundColor: colors.light,
@@ -681,6 +701,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
+    marginBottom: 24, // Add margin at the bottom
   },
   leaderboardTitle: {
     fontSize: 18,

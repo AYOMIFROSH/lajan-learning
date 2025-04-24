@@ -172,11 +172,11 @@ const handleContinue = async () => {
         </View>
       </ScrollView>
       
-      <Image
+      {/* <Image
         source={{ uri: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60' }}
         style={styles.backgroundImage}
         resizeMode="contain"
-      />
+      /> */}
     </LinearGradient>
   );
 }
