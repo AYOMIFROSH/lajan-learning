@@ -6,7 +6,10 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
-  SafeAreaView
+  SafeAreaView,
+  Dimensions,
+  Platform,
+  useWindowDimensions
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '@/store/auth-store';
@@ -85,6 +88,8 @@ export default function HomeScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const { progress } = useProgressStore();
+  // Get dynamic window dimensions
+  const { width, height } = useWindowDimensions();
 
   const [lessonFilter, setLessonFilter] = useState<LessonFilter>('today');
   const [qrModalVisible, setQrModalVisible] = useState(false);
@@ -132,7 +137,11 @@ export default function HomeScreen() {
   
   return (
     <SafeAreaView style={styles.safeArea}>
-      <ScrollView style={styles.container}>
+      <ScrollView 
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.contentContainer}
+      >
         <View style={styles.header}>
           <View>
             <Text style={styles.greeting}>Welcome back,</Text>
@@ -142,6 +151,7 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={styles.qrButton}
             onPress={handleShareQRCode}
+            accessibilityLabel="Share QR code"
           >
             <QrCode size={24} color={colors.primary} />
           </TouchableOpacity>
@@ -172,6 +182,8 @@ export default function HomeScreen() {
                   lessonFilter === 'today' && styles.activeFilterButton
                 ]}
                 onPress={() => setLessonFilter('today')}
+                accessibilityLabel="Today's lessons"
+                accessibilityState={{ selected: lessonFilter === 'today' }}
               >
                 <Text
                   style={[
@@ -189,6 +201,8 @@ export default function HomeScreen() {
                   lessonFilter === 'all' && styles.activeFilterButton
                 ]}
                 onPress={() => setLessonFilter('all')}
+                accessibilityLabel="All lessons"
+                accessibilityState={{ selected: lessonFilter === 'all' }}
               >
                 <Text
                   style={[
@@ -206,27 +220,28 @@ export default function HomeScreen() {
             <Card variant="elevated" style={styles.todayLessonCard}>
               {recommendedTopic ? (
                 <View style={styles.todayLessonContent}>
-                  <View>
+                  <View style={styles.todayLessonTextContainer}>
                     <Text style={styles.todayLessonTitle}>
                       Today's Recommended Lesson
                     </Text>
-                    <Text style={styles.todayLessonSubtitle}>
+                    <Text style={styles.todayLessonSubtitle} numberOfLines={2} ellipsizeMode="tail">
                       {recommendedTopic.title}
                     </Text>
-                    <Text style={styles.todayLessonDescription}>
+                    <Text style={styles.todayLessonDescription} numberOfLines={3} ellipsizeMode="tail">
                       {recommendedTopic.description}
                     </Text>
                   </View>
 
+                  {/* Uncomment when you have appropriate images */}
                   {/* <Image
-                    source={{ uri: 'https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60' }}
+                    source={{ uri: recommendedTopic.image || 'https://via.placeholder.com/80' }}
                     style={styles.todayLessonImage}
                     resizeMode="contain"
                   /> */}
                 </View>
               ) : (
                 <View style={styles.todayLessonContent}>
-                  <View>
+                  <View style={styles.todayLessonTextContainer}>
                     <Text style={styles.todayLessonTitle}>
                       Today's Recommended Lesson
                     </Text>
@@ -237,12 +252,6 @@ export default function HomeScreen() {
                       Please wait while we prepare today's lesson
                     </Text>
                   </View>
-
-                  {/* <Image
-                    source={{ uri: 'https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60' }}
-                    style={styles.todayLessonImage}
-                    resizeMode="contain"
-                  /> */}
                 </View>
               )}
 
@@ -284,7 +293,7 @@ export default function HomeScreen() {
               )}
             </Card>
           ) : (
-            <View>
+            <View style={styles.allLessonsContainer}>
               {availableTopics.map(topic => (
                 <TopicCard
                   key={topic.id}
@@ -305,7 +314,10 @@ export default function HomeScreen() {
         <View style={styles.learningPathSection}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Your Learning Path</Text>
-            <TouchableOpacity onPress={() => router.push('/topics')}>
+            <TouchableOpacity 
+              onPress={() => router.push('/topics')}
+              accessibilityLabel="See all topics"
+            >
               <Text style={styles.seeAllText}>See All</Text>
             </TouchableOpacity>
           </View>
@@ -331,9 +343,18 @@ export default function HomeScreen() {
                       (progress?.totalPoints || 0) >= topic.requiredPoints && styles.completedMilestone
                     ]}
                   >
-                    <Text style={styles.milestoneNumber}>{index + 1}</Text>
+                    <Text 
+                      style={[
+                        styles.milestoneNumber,
+                        (progress?.totalPoints || 0) >= topic.requiredPoints && styles.completedMilestoneText
+                      ]}
+                    >
+                      {index + 1}
+                    </Text>
                   </View>
-                  <Text style={styles.milestoneName}>{topic.title}</Text>
+                  <Text style={styles.milestoneName} numberOfLines={2} ellipsizeMode="tail">
+                    {topic.title}
+                  </Text>
                 </View>
               ))}
             </View>
@@ -359,6 +380,11 @@ export default function HomeScreen() {
   );
 }
 
+// Get the window dimensions
+const windowWidth = Dimensions.get('window').width;
+const windowHeight = Dimensions.get('window').height;
+
+// Create a more responsive style system based on screen dimensions
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
@@ -366,27 +392,32 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
+  },
+  contentContainer: {
     padding: 16,
+    paddingBottom: 32, // Extra padding at the bottom
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 24,
+    marginBottom: 20,
+    paddingTop: Platform.OS === 'ios' ? 4 : 0, // Additional padding for iOS
   },
   greeting: {
     fontSize: 16,
     color: colors.darkGray,
+    marginBottom: 4,
   },
   userName: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     color: colors.dark,
   },
   qrButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: `${colors.primary}20`,
     justifyContent: 'center',
     alignItems: 'center',
@@ -394,13 +425,13 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: 'row',
     marginBottom: 24,
+    gap: 12, // Use gap for more consistent spacing
   },
   statCard: {
     flex: 1,
     backgroundColor: colors.card,
     borderRadius: 12,
     padding: 16,
-    marginRight: 12,
     alignItems: 'center',
     shadowColor: colors.dark,
     shadowOffset: { width: 0, height: 2 },
@@ -411,7 +442,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   statValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: 'bold',
     color: colors.dark,
     marginVertical: 4,
@@ -419,19 +450,7 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 12,
     color: colors.darkGray,
-  },
-  shareButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: `${colors.primary}20`,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  shareText: {
-    color: colors.primary,
-    fontWeight: '500',
-    marginLeft: 4,
+    textAlign: 'center',
   },
   lessonSection: {
     marginBottom: 24,
@@ -480,6 +499,11 @@ const styles = StyleSheet.create({
   todayLessonContent: {
     flexDirection: 'row',
     marginBottom: 16,
+    justifyContent: 'space-between',
+  },
+  todayLessonTextContainer: {
+    flex: 1, // Take available space
+    paddingRight: 8, // Add space between text and potential image
   },
   todayLessonTitle: {
     fontSize: 14,
@@ -496,12 +520,15 @@ const styles = StyleSheet.create({
   todayLessonDescription: {
     fontSize: 14,
     color: colors.darkGray,
-    maxWidth: 200,
+    lineHeight: 20,
   },
   todayLessonImage: {
     width: 80,
     height: 80,
-    marginLeft: 'auto',
+    marginLeft: 8,
+  },
+  allLessonsContainer: {
+    gap: 12, // Consistent spacing between cards
   },
   noLessonsText: {
     textAlign: 'center',
@@ -514,6 +541,7 @@ const styles = StyleSheet.create({
   seeAllText: {
     color: colors.primary,
     fontWeight: '500',
+    padding: 4, // Larger touch target
   },
   learningPathCard: {
     padding: 20,
@@ -534,6 +562,7 @@ const styles = StyleSheet.create({
   },
   pathMilestone: {
     alignItems: 'center',
+    width: windowWidth / 5, // Responsive width based on screen width
   },
   milestoneIcon: {
     width: 36,
@@ -552,11 +581,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: colors.dark,
   },
+  completedMilestoneText: {
+    color: colors.light, // White text for better contrast on primary color
+  },
   milestoneName: {
     fontSize: 12,
     color: colors.darkGray,
     textAlign: 'center',
-    maxWidth: 70,
+    maxWidth: 80,
   },
   startLearningButton: {
     marginTop: 8,

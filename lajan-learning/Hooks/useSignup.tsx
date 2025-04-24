@@ -1,35 +1,21 @@
 import { useState } from 'react';
-import { auth, db } from '@/firebase/config';
+import { firebaseAuth, firestoreDB } from '@/firebase/config';
 import firebase from '@react-native-firebase/app';
 
-interface SignupCredentials {
-  email: string;
-  password: string;
-  Name: string;
-}
+interface SignupCredentials { email: string; password: string; Name: string; }
 
 export default function useSignup() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const registeruser = async (credentials: SignupCredentials) => {
+  const registerUser = async ({ email, password, Name }: SignupCredentials) => {
     setLoading(true);
     setError(null);
-    
     try {
-      const { email, password, Name } = credentials;
-      
-      // Create user with Firebase
-      const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+      const userCredential = await firebaseAuth.createUserWithEmailAndPassword(email, password);
       const firebaseUser = userCredential.user;
-      
-      // Set display name
-      await firebaseUser.updateProfile({
-        displayName: Name
-      });
-      
-      // Create user document in Firestore
-      await db.collection('users').doc(firebaseUser.uid).set({
+      await firebaseUser.updateProfile({ displayName: Name });
+      await firestoreDB.collection('users').doc(firebaseUser.uid).set({
         email,
         name: Name,
         role: 'user',
@@ -37,25 +23,17 @@ export default function useSignup() {
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       });
-      
-      // Send verification email
       await firebaseUser.sendEmailVerification();
-      
       return true;
-    } catch (error: any) {
-      console.error('Registration error:', error);
-      
+    } catch (err: any) {
+      console.error('Registration error:', err);
       let errorMessage = 'Registration failed';
-      if (error.code === 'auth/email-already-in-use') {
-        errorMessage = 'This email is already in use';
-      } else if (error.code === 'auth/invalid-email') {
-        errorMessage = 'Invalid email format';
-      } else if (error.code === 'auth/weak-password') {
-        errorMessage = 'Password is too weak';
-      } else if (error.code === 'auth/operation-not-allowed') {
-        errorMessage = 'Email/password accounts are not enabled';
+      switch (err.code) {
+        case 'auth/email-already-in-use': errorMessage = 'This email is already in use'; break;
+        case 'auth/invalid-email': errorMessage = 'Invalid email format'; break;
+        case 'auth/weak-password': errorMessage = 'Password is too weak'; break;
+        case 'auth/operation-not-allowed': errorMessage = 'Email/password accounts are not enabled'; break;
       }
-      
       setError(errorMessage);
       return false;
     } finally {
@@ -63,5 +41,5 @@ export default function useSignup() {
     }
   };
 
-  return { registeruser, loading, error };
+  return { registerUser, loading, error };
 }

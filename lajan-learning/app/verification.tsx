@@ -1,5 +1,6 @@
+// app/verification.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import colors from '@/constants/colors';
@@ -7,19 +8,13 @@ import Button from '@/components/Button';
 import { Mail, ArrowLeft } from 'lucide-react-native';
 import { useAuthStore } from '@/store/auth-store';
 
-// Firebase imports
-import { 
-  sendEmailVerification,
-  signInWithEmailAndPassword,
-  signOut
-} from 'firebase/auth';
-import { auth } from '@/firebase/config';
+// Use the Firebase Auth instance from our config
+import { firebaseAuth } from '@/firebase/config';
 
 export default function VerificationScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { user, isAuthenticated } = useAuthStore();
-  
   const [email, setEmail] = useState('');
   const [resendDisabled, setResendDisabled] = useState(false);
   const [countdown, setCountdown] = useState(0);
@@ -27,59 +22,36 @@ export default function VerificationScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Set email from params or from auth store
-    if (params.email) {
-      setEmail(params.email as string);
-    } else if (user?.email) {
-      setEmail(user.email);
-    }
+    if (params.email) setEmail(params.email as string);
+    else if (user?.email) setEmail(user.email);
   }, [params, user]);
 
   useEffect(() => {
-    // If the user is already authenticated and verified, redirect to home
-    if (isAuthenticated && user?.verified) {
-      router.replace('/(tabs)');
-    }
+    if (isAuthenticated && user?.verified) router.replace('/(tabs)');
   }, [isAuthenticated, user, router]);
 
   useEffect(() => {
-    // Countdown timer for resend button
     if (countdown > 0) {
-      const timer = setTimeout(() => {
-        setCountdown(countdown - 1);
-      }, 1000);
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
       return () => clearTimeout(timer);
     } else if (countdown === 0 && resendDisabled) {
       setResendDisabled(false);
     }
   }, [countdown, resendDisabled]);
 
-  const handleBack = () => {
-    // If the user came from registration, go back to login
-    router.replace('/auth');
-  };
+  const handleBack = () => router.replace('/auth');
 
   const handleResendVerification = async () => {
     if (resendDisabled) return;
-
     setIsResending(true);
     setError(null);
-    
     try {
-      // We need to sign in the user again to send verification email
-      if (!auth.currentUser) {
-        // Show alert to get password
+      if (!firebaseAuth.currentUser) {
         Alert.prompt(
           'Enter Password',
           'Please enter your password to resend verification email',
           [
-            {
-              text: 'Cancel',
-              onPress: () => {
-                setIsResending(false);
-              },
-              style: 'cancel',
-            },
+            { text: 'Cancel', onPress: () => setIsResending(false), style: 'cancel' },
             {
               text: 'Submit',
               onPress: async (password) => {
@@ -88,57 +60,34 @@ export default function VerificationScreen() {
                   setIsResending(false);
                   return;
                 }
-                
                 try {
-                  // Sign in
-                  const userCredential = await signInWithEmailAndPassword(auth, email, password as string);
-                  // Send verification email
-                  await sendEmailVerification(userCredential.user);
-                  
-                  // Show success message
-                  Alert.alert(
-                    'Verification Email Sent',
-                    'Please check your email and click the verification link.'
-                  );
-                  
-                  // Set cooldown
+                  const userCredential = await firebaseAuth.signInWithEmailAndPassword(email, password);
+                  await userCredential.user.sendEmailVerification();
+                  Alert.alert('Verification Email Sent', 'Please check your email and click the verification link.');
                   setResendDisabled(true);
                   setCountdown(60);
-                } catch (error: any) {
-                  console.error('Error sending verification:', error);
+                } catch (err: any) {
+                  console.error('Error sending verification:', err);
                   let errorMessage = 'Failed to send verification email';
-                  
-                  if (error.code === 'auth/invalid-credential') {
-                    errorMessage = 'Incorrect password';
-                  } else if (error.code === 'auth/too-many-requests') {
-                    errorMessage = 'Too many attempts. Please try again later.';
-                  }
-                  
+                  if (err.code === 'auth/invalid-credential') errorMessage = 'Incorrect password';
+                  else if (err.code === 'auth/too-many-requests') errorMessage = 'Too many attempts. Please try again later.';
                   setError(errorMessage);
                 } finally {
                   setIsResending(false);
                 }
-              },
-            },
+              }
+            }
           ],
           'secure-text'
         );
       } else {
-        // User is already signed in, just send verification
-        await sendEmailVerification(auth.currentUser);
-        
-        // Show success message
-        Alert.alert(
-          'Verification Email Sent',
-          'Please check your email and click the verification link.'
-        );
-        
-        // Set cooldown
+        await firebaseAuth.currentUser.sendEmailVerification();
+        Alert.alert('Verification Email Sent', 'Please check your email and click the verification link.');
         setResendDisabled(true);
         setCountdown(60);
       }
-    } catch (error: any) {
-      console.error('Error in resend flow:', error);
+    } catch (err: any) {
+      console.error('Error in resend flow:', err);
       setError('Failed to resend verification email. Please try again later.');
     } finally {
       setIsResending(false);
@@ -147,25 +96,15 @@ export default function VerificationScreen() {
 
   const handleCheckVerification = async () => {
     try {
-      // Sign out and sign back in to refresh the user's token
-      if (auth.currentUser) {
-        // Get email before signing out
-        const currentEmail = auth.currentUser.email;
-        
-        // Sign out
-        await signOut(auth);
-        
+      if (firebaseAuth.currentUser) {
+        const currentEmail = firebaseAuth.currentUser.email;
+        await firebaseAuth.signOut();
         if (currentEmail) {
-          // Show alert to get password
           Alert.prompt(
             'Confirm Verification',
             'Please enter your password to check verification status',
             [
-              {
-                text: 'Cancel',
-                onPress: () => {},
-                style: 'cancel',
-              },
+              { text: 'Cancel', onPress: () => {}, style: 'cancel' },
               {
                 text: 'Submit',
                 onPress: async (password) => {
@@ -173,128 +112,60 @@ export default function VerificationScreen() {
                     setError('Password is required');
                     return;
                   }
-                  
                   try {
-                    // Sign in again to refresh token and check verification status
-                    const userCredential = await signInWithEmailAndPassword(auth, currentEmail, password as string);
-                    
+                    const userCredential = await firebaseAuth.signInWithEmailAndPassword(currentEmail, password);
                     if (userCredential.user.emailVerified) {
-                      // Email is verified, navigate to home
-                      Alert.alert(
-                        'Success!',
-                        'Your email has been verified. You can now log in.',
-                        [
-                          {
-                            text: 'OK',
-                            onPress: () => router.replace('/(tabs)')
-                          }
-                        ]
-                      );
+                      Alert.alert('Success!', 'Your email has been verified. You can now log in.', [
+                        { text: 'OK', onPress: () => router.replace('/(tabs)') }
+                      ]);
                     } else {
-                      // Email is not yet verified
-                      Alert.alert(
-                        'Not Verified',
-                        'Your email has not been verified yet. Please check your inbox and click the verification link.'
-                      );
+                      Alert.alert('Not Verified', 'Your email has not been verified yet. Please check your inbox and click the verification link.');
                     }
-                  } catch (error: any) {
-                    console.error('Error checking verification:', error);
+                  } catch (err: any) {
+                    console.error('Error checking verification:', err);
                     let errorMessage = 'Failed to check verification status';
-                    
-                    if (error.code === 'auth/invalid-credential') {
-                      errorMessage = 'Incorrect password';
-                    }
-                    
+                    if (err.code === 'auth/invalid-credential') errorMessage = 'Incorrect password';
                     setError(errorMessage);
                   }
-                },
-              },
+                }
+              }
             ],
             'secure-text'
           );
         }
       } else {
-        // User is not signed in
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to check your verification status',
-          [
-            {
-              text: 'OK',
-              onPress: () => router.replace('/auth')
-            }
-          ]
-        );
+        Alert.alert('Sign In Required', 'Please sign in to check your verification status', [
+          { text: 'OK', onPress: () => router.replace('/auth') }
+        ]);
       }
-    } catch (error) {
-      console.error('Error in verification check:', error);
+    } catch (err) {
+      console.error('Error in verification check:', err);
       setError('Failed to check verification status. Please try again.');
     }
   };
 
-  const handleChangeEmail = () => {
-    router.replace('/auth');
-  };
+  const handleChangeEmail = () => router.replace('/auth');
 
   return (
-    <LinearGradient
-      colors={[colors.light, colors.background, colors.gray]}
-      style={styles.container}
-    >
+    <LinearGradient colors={[colors.light, colors.background, colors.gray]} style={styles.container}>
       <TouchableOpacity style={styles.backButton} onPress={handleBack}>
         <ArrowLeft size={24} color={colors.dark} />
       </TouchableOpacity>
-
       <View style={styles.content}>
         <View style={styles.iconContainer}>
           <Mail size={70} color={colors.primary} />
         </View>
-
         <Text style={styles.title}>Verify Your Email</Text>
-        
-        <Text style={styles.emailText}>
-          We've sent a verification link to:
-        </Text>
+        <Text style={styles.emailText}>We've sent a verification link to:</Text>
         <Text style={styles.emailHighlight}>{email}</Text>
-        
-        <Text style={styles.description}>
-          Please check your inbox and click the verification link to activate your account. 
-          If you don't see the email, check your spam folder.
-        </Text>
-
-        {error && (
-          <Text style={styles.errorText}>{error}</Text>
-        )}
-
-        <Button
-          title="I've Verified My Email"
-          onPress={handleCheckVerification}
-          variant="primary"
-          size="large"
-          style={styles.verifyButton}
-        />
-
-        <TouchableOpacity
-          onPress={handleResendVerification}
-          disabled={resendDisabled || isResending}
-          style={styles.resendLink}
-        >
-          <Text style={[
-            styles.resendText,
-            (resendDisabled || isResending) && styles.disabledText
-          ]}>
-            {isResending 
-              ? 'Sending...' 
-              : resendDisabled 
-                ? `Resend in ${countdown}s` 
-                : 'Resend Verification Email'}
-          </Text>
+        <Text style={styles.description}>Please check your inbox and click the verification link to activate your account. If you don't see the email, check your spam folder.</Text>
+        {error && <Text style={styles.errorText}>{error}</Text>}
+        <Button title="I've Verified My Email" onPress={handleCheckVerification} variant="primary" size="large" style={styles.verifyButton} />
+        <TouchableOpacity onPress={handleResendVerification} disabled={resendDisabled || isResending} style={styles.resendLink}>
+          <Text style={[styles.resendText, (resendDisabled || isResending) && styles.disabledText]}>{isResending ? 'Sending...' : resendDisabled ? `Resend in ${countdown}s` : 'Resend Verification Email'}</Text>
         </TouchableOpacity>
-
         <TouchableOpacity onPress={handleChangeEmail} style={styles.changeEmailLink}>
-          <Text style={styles.changeEmailText}>
-            Change Email Address
-          </Text>
+          <Text style={styles.changeEmailText}>Change Email Address</Text>
         </TouchableOpacity>
       </View>
     </LinearGradient>
