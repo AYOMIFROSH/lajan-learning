@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -28,14 +28,55 @@ import {
   ChevronRight,
   Edit,
   Shield,
-  Lock
+  Lock,
+  Bell
 } from 'lucide-react-native';
+import { firebase, firestoreDB } from '@/firebase/config';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, logout, connectGuardian } = useAuthStore();
   const { progress, resetProgress } = useProgressStore();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+
+  // Fetch unread notification count
+  useEffect(() => {
+    if (user?.id) {
+      const fetchUnreadCount = async () => {
+        try {
+          // Get notifications from Firestore
+          const notificationsRef = firestoreDB.collection('notifications')
+            .where('userId', '==', user.id)
+            .where('read', '==', false);
+          
+          const snapshot = await notificationsRef.get();
+          setUnreadNotifications(snapshot.size);
+        } catch (error) {
+          console.error('Error fetching notification count:', error);
+          // Use default unread count based on progress data as fallback
+          if (progress) {
+            // Count potential unread notifications based on completed modules
+            let count = 0;
+            Object.entries(progress.topicsProgress || {}).forEach(([topicId, topicProgress]) => {
+              if (topicProgress.completedModules && topicProgress.completedModules.length > 0) {
+                count += 1; // Count one notification per topic with completions
+              }
+            });
+            
+            // Add one for streak if applicable
+            if (progress.streak > 1) {
+              count += 1;
+            }
+            
+            setUnreadNotifications(count);
+          }
+        }
+      };
+
+      fetchUnreadCount();
+    }
+  }, [user?.id, progress]);
 
   const handleLogout = async () => {
     try {
@@ -52,6 +93,10 @@ export default function ProfileScreen() {
 
   const handleEditProfile = () => {
     router.push('/profile/edit');
+  };
+
+  const handleNavigateToNotifications = () => {
+    router.push('/(tabs)/notifications');
   };
 
   const handleConnectGuardian = () => {
@@ -174,11 +219,13 @@ export default function ProfileScreen() {
               <Text style={styles.userName}>{user?.name || 'User'}</Text>
               <Text style={styles.userEmail}>{user?.email || 'user@example.com'}</Text>
 
-              <View style={styles.learningStyleBadge}>
-                <Text style={styles.learningStyleText}>
-                  {user?.learningStyle === 'visual' ? 'Visual Learner' : 'Practical Learner'}
-                </Text>
-              </View>
+              {user?.learningStyle && (
+                <View style={styles.learningStyleBadge}>
+                  <Text style={styles.learningStyleText}>
+                    {user.learningStyle === 'visual' ? 'Visual Learner' : 'Practical Learner'}
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
           
@@ -223,6 +270,27 @@ export default function ProfileScreen() {
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>
+
+          {/* Notifications Menu Item */}
+          <TouchableOpacity style={styles.menuItem} onPress={handleNavigateToNotifications}>
+            <View style={[
+              styles.menuIconContainer,
+              { backgroundColor: `${colors.info}20` }
+            ]}>
+              <Bell size={20} color={colors.info} />
+            </View>
+            <Text style={styles.menuItemText}>Notifications</Text>
+            <View style={styles.menuItemRight}>
+              {unreadNotifications > 0 && (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>
+                    {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                  </Text>
+                </View>
+              )}
+              <ChevronRight size={20} color={colors.darkGray} />
+            </View>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.menuItem} onPress={handleEditProfile}>
             <View style={styles.menuIconContainer}>
@@ -611,5 +679,20 @@ const styles = StyleSheet.create({
   },
   logoutButton: {
     alignSelf: 'center',
+  },
+  notificationBadge: {
+    backgroundColor: colors.error,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    minWidth: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  notificationBadgeText: {
+    color: colors.light,
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });

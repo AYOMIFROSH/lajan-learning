@@ -5,6 +5,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Firebase imports
 import { firebase, firestoreDB } from '@/firebase/config';
 
+// Import topics data for completion checking
+import { topics } from '@/mocks/topics';
+
+// Import notification service
+import { 
+  createModuleCompletionNotification, 
+  createTopicCompletionNotification, 
+  createStreakMilestoneNotification,
+  createPointsMilestoneNotification
+} from '@/services/notifictaion-service';
+
 // Define interfaces for better type safety
 interface ModuleProgress {
   completed: boolean;
@@ -20,6 +31,7 @@ interface TopicProgress {
   correctAnswers: number;
   modules?: Record<string, ModuleProgress>; 
   completedModules?: string[]; // Added for compatibility with server model
+  fullyCompleted?: boolean; // Flag to track if all modules are completed
 }
 
 export interface LearningProgress {
@@ -47,6 +59,7 @@ interface ProgressStore extends ProgressState {
   areAllModulesCompletedToday: (topicId: string, modules: any[]) => boolean;
   syncWithServer: (token: string) => Promise<void>; // Function to sync with Firestore
   fetchProgressFromServer: (userId: string, token: string) => Promise<void>; // Function to fetch from Firestore
+  checkAndNotifyTopicCompletion: (userId: string, topicId: string, topicsProgress: Record<string, TopicProgress>) => Promise<void>; // Function to check and notify topic completion
 }
 
 export const useProgressStore = create<ProgressStore>()(
@@ -156,7 +169,40 @@ export const useProgressStore = create<ProgressStore>()(
         }
       },
 
-      // Enhanced completeModule function to track last attempt with timestamp and sync with Firestore
+      // Helper function to check if a topic is fully completed and create notification
+      checkAndNotifyTopicCompletion: async (userId: string, topicId: string, topicsProgress: Record<string, TopicProgress>) => {
+        try {
+          // Find the topic in our topics data
+          const topic = topics.find(t => t.id === topicId);
+          if (!topic) return;
+          
+          // Get the user's progress for this topic
+          const topicProgress = topicsProgress[topicId];
+          if (!topicProgress || !topicProgress.completedModules) return;
+          
+          // Check if all modules are completed
+          const allModulesCompleted = topic.modules.every(module => 
+            topicProgress.completedModules?.includes(module.id)
+          );
+          
+          if (allModulesCompleted) {
+            // Check if we've already marked this topic as fully completed before
+            const isNewTopicCompletion = !topicProgress.fullyCompleted;
+            
+            if (isNewTopicCompletion) {
+              // Mark the topic as fully completed
+              topicsProgress[topicId].fullyCompleted = true;
+              
+              // Create topic completion notification
+              await createTopicCompletionNotification(userId, topicId);
+            }
+          }
+        } catch (error) {
+          console.error("Error checking topic completion:", error);
+        }
+      },
+
+      // Enhanced completeModule function to track last attempt with timestamp, sync with Firestore, and create notifications
       completeModule: async (userId: string, topicId: string, moduleId: string, score: number, token: string | null) => {
         console.log("Completing module:", { userId, topicId, moduleId, score });
         set({ isLoading: true, error: null });
@@ -204,11 +250,19 @@ export const useProgressStore = create<ProgressStore>()(
                 
                 if (userDoc.exists) {
                   const userData = userDoc.data();
+                  const newPoints = (userData?.points || 0) + 50;
+                  
                   await firestoreDB.collection('users').doc(userId).update({
-                    points: (userData?.points || 0) + 50,
+                    points: newPoints,
                     streak: 1,
                     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                   });
+                  
+                  // Create notification for first module completion
+                  await createModuleCompletionNotification(userId, topicId, moduleId, score);
+                  
+                  // Check for points milestone
+                  await createPointsMilestoneNotification(userId, newPoints);
                 }
               } catch (error) {
                 console.error("Failed to save new progress to Firestore", error);
@@ -261,6 +315,13 @@ export const useProgressStore = create<ProgressStore>()(
             // Add moduleId to completedModules if not already there
             if (isNewCompletion) {
               topicsProgress[topicId].completedModules.push(moduleId);
+              
+              // Create notification for new module completion
+              try {
+                await createModuleCompletionNotification(userId, topicId, moduleId, score);
+              } catch (error) {
+                console.error("Failed to create module completion notification:", error);
+              }
             }
             
             // Update topic overall progress
@@ -294,6 +355,9 @@ export const useProgressStore = create<ProgressStore>()(
             // Update streak
             get().updateStreak();
             
+            // Check if topic is fully completed
+            await get().checkAndNotifyTopicCompletion(userId, topicId, topicsProgress);
+            
             // Save to Firestore
             if (token) {
               try {
@@ -306,12 +370,28 @@ export const useProgressStore = create<ProgressStore>()(
                   
                   if (userDoc.exists) {
                     const userData = userDoc.data();
+                    const newPoints = (userData?.points || 0) + pointsEarned;
+                    
                     await firestoreDB.collection('users').doc(userId).update({
-                      points: (userData?.points || 0) + pointsEarned,
+                      points: newPoints,
                       streak: updatedProgress.streak,
                       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
+                    
+                    // Check for points milestone
+                    await createPointsMilestoneNotification(userId, newPoints);
                   }
+                }
+                
+                // Check for streak milestone
+                if (updatedProgress.streak === 3 || 
+                    updatedProgress.streak === 7 || 
+                    updatedProgress.streak === 14 || 
+                    updatedProgress.streak === 30 || 
+                    updatedProgress.streak === 60 || 
+                    updatedProgress.streak === 100 || 
+                    updatedProgress.streak % 100 === 0) {
+                  await createStreakMilestoneNotification(userId, updatedProgress.streak);
                 }
               } catch (error) {
                 console.error("Failed to save updated progress to Firestore", error);

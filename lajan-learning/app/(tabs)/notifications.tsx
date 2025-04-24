@@ -7,28 +7,28 @@ import {
   TouchableOpacity,
   SafeAreaView,
   ActivityIndicator,
-  RefreshControl
+  RefreshControl,
+  Alert
 } from 'react-native';
 import colors from '@/constants/colors';
 import NotificationItem from '@/components/NotificationItem';
 import Button from '@/components/Button';
 import { Bell, Users, Share2 } from 'lucide-react-native';
 import { useAuthStore } from '@/store/auth-store';
+import { useProgressStore } from '@/store/progress-store';
+import { useRouter } from 'expo-router';
 import { Platform } from 'react-native';
+import { firebase, firestoreDB } from '@/firebase/config';
 
 import { Notification } from '@/types/content';
-
-// API base URL
-const API_BASE_URL = Platform.select({
-  ios: 'http://172.20.10.3:3000/api',
-  android: 'http://10.0.2.2:3000/api',
-  web: 'http://localhost:3000/api',
-}) || 'http://localhost:3000/api';
+import { topics } from '@/mocks/topics';
 
 type NotificationsTab = 'notifications' | 'multiplayer';
 
 export default function NotificationsScreen() {
   const { token, user } = useAuthStore();
+  const { progress } = useProgressStore();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<NotificationsTab>('notifications');
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,10 +38,10 @@ export default function NotificationsScreen() {
   // Fetch notifications when component mounts
   useEffect(() => {
     fetchNotifications();
-  }, [token]);
+  }, [token, progress]);
   
   const fetchNotifications = async () => {
-    if (!token) {
+    if (!user || !user.id) {
       setError('Authentication required');
       setLoading(false);
       return;
@@ -51,29 +51,149 @@ export default function NotificationsScreen() {
       setLoading(true);
       setError(null);
       
-      const response = await fetch(`${API_BASE_URL}/notifications`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      // Get notifications from Firestore instead of API
+      const notificationsRef = firestoreDB.collection('notifications')
+        .where('userId', '==', user.id)
+        .orderBy('createdAt', 'desc')
+        .limit(50);
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch notifications');
+      const snapshot = await notificationsRef.get();
+      
+      if (snapshot.empty) {
+        // Generate initial notifications based on user progress
+        const generatedNotifications = generateInitialNotifications();
+        setNotifications(generatedNotifications);
+      } else {
+        const fetchedNotifications: Notification[] = [];
+        snapshot.forEach(doc => {
+          fetchedNotifications.push({
+            id: doc.id,
+            ...doc.data() as Omit<Notification, 'id'>
+          });
+        });
+        setNotifications(fetchedNotifications);
       }
-      
-      const data = await response.json();
-      
-      setNotifications(data.notifications);
     } catch (err) {
       console.error('Error fetching notifications:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch notifications');
+      
+      // Generate placeholder notifications if there's an error
+      const generatedNotifications = generateInitialNotifications();
+      setNotifications(generatedNotifications);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+  
+  // Generate initial notifications based on user progress
+  const generateInitialNotifications = (): Notification[] => {
+    const initialNotifications: Notification[] = [];
+    const now = new Date();
+    
+    // Welcome notification
+    initialNotifications.push({
+      id: 'welcome',
+      userId: user?.id || '',
+      title: 'Welcome to Lajan Learning',
+      message: 'Start your financial education journey by exploring topics and completing modules!',
+      type: 'lesson',
+      read: false,
+      createdAt: new Date(now.getTime() - 86400000).toISOString(), // 1 day ago
+      referenceId: ''
+    });
+    
+    // Add streak notification if user has a streak
+    if (progress && progress.streak > 1) {
+      initialNotifications.push({
+        id: 'streak',
+        userId: user?.id || '',
+        title: `${progress.streak} Day Streak!`,
+        message: `You've maintained your learning streak for ${progress.streak} days. Keep it up!`,
+        type: 'achievement',
+        read: false,
+        createdAt: new Date(now.getTime() - 3600000).toISOString(), // 1 hour ago
+        referenceId: ''
+      });
+    }
+    
+    // Check for completed modules
+    if (progress && progress.topicsProgress) {
+      // Get completed topics and modules
+      Object.entries(progress.topicsProgress).forEach(([topicId, topicProgress]) => {
+        const topic = topics.find(t => t.id === topicId);
+        if (!topic) return;
+        
+        // Add notification for each completed topic
+        if (topicProgress.completed) {
+          initialNotifications.push({
+            id: `topic-${topicId}`,
+            userId: user?.id || '',
+            title: `Topic Completed: ${topic.title}`,
+            message: `Congratulations! You've completed the ${topic.title} topic and earned points.`,
+            type: 'achievement',
+            read: false,
+            createdAt: new Date(now.getTime() - 43200000).toISOString(), // 12 hours ago
+            referenceId: topicId
+          });
+        }
+        
+        // Add notifications for recently completed modules
+        if (topicProgress.completedModules && topicProgress.completedModules.length > 0) {
+          const recentModule = topic.modules.find(m => 
+            m.id === topicProgress.completedModules?.[topicProgress.completedModules.length - 1]
+          );
+          
+          if (recentModule) {
+            initialNotifications.push({
+              id: `module-${recentModule.id}`,
+              userId: user?.id || '',
+              title: `Module Completed: ${recentModule.title}`,
+              message: `You've finished learning about ${recentModule.title}. Great job!`,
+              type: 'lesson',
+              read: false,
+              createdAt: new Date(now.getTime() - 7200000).toISOString(), // 2 hours ago
+              referenceId: recentModule.id
+            });
+          }
+        }
+      });
+    }
+    
+    // Points milestone if user has points
+    if (user && user.points > 0) {
+      // Find closest milestone (100, 250, 500, 1000, etc.)
+      const milestones = [100, 250, 500, 1000, 2500, 5000, 10000];
+      for (let i = milestones.length - 1; i >= 0; i--) {
+        if (user.points >= milestones[i]) {
+          initialNotifications.push({
+            id: `points-${milestones[i]}`,
+            userId: user.id,
+            title: `Points Milestone: ${milestones[i]}`,
+            message: `Congratulations! You've earned over ${milestones[i]} points in your learning journey!`,
+            type: 'achievement',
+            read: false,
+            createdAt: new Date(now.getTime() - 172800000).toISOString(), // 2 days ago
+            referenceId: ''
+          });
+          break;
+        }
+      }
+    }
+    
+    // Add a notification about multiplayer mode
+    initialNotifications.push({
+      id: 'multiplayer-intro',
+      userId: user?.id || '',
+      title: 'Challenge Friends in Multiplayer',
+      message: 'Test your financial knowledge against friends in fun quiz battles. Try multiplayer mode now!',
+      type: 'friend',
+      read: false,
+      createdAt: new Date(now.getTime() - 259200000).toISOString(), // 3 days ago
+      referenceId: ''
+    });
+    
+    return initialNotifications;
   };
   
   const handleRefresh = () => {
@@ -86,21 +206,16 @@ export default function NotificationsScreen() {
   };
   
   const handleNotificationPress = async (notification: Notification) => {
-    if (!token) return;
+    if (!user || !user.id) return;
     
     try {
-      // Mark notification as read on server
-      const response = await fetch(`${API_BASE_URL}/notifications/${notification.id}/read`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        console.error('Failed to mark notification as read');
-        return;
+      // Mark notification as read in Firestore if it's a real notification
+      if (notification.id !== 'welcome' && notification.id !== 'streak' && 
+          !notification.id.startsWith('topic-') && !notification.id.startsWith('module-') &&
+          !notification.id.startsWith('points-') && notification.id !== 'multiplayer-intro') {
+        await firestoreDB.collection('notifications').doc(notification.id).update({
+          read: true
+        });
       }
       
       // Update local state
@@ -109,55 +224,92 @@ export default function NotificationsScreen() {
       ));
       
       // Handle navigation based on notification type
-      // In a real app, this would navigate to the relevant screen
-      console.log(`Pressed notification: ${notification.title} (${notification.type})`);
-      
-      // Example navigation logic based on notification type
-      // if (notification.type === 'lesson') {
-      //   navigation.navigate('LessonDetail', { lessonId: notification.referenceId });
-      // } else if (notification.type === 'achievement') {
-      //   navigation.navigate('Achievements');
-      // }
+      if (notification.type === 'lesson' && notification.referenceId) {
+        // Extract topic id and module id if available
+        const moduleIdMatch = notification.referenceId.match(/^([a-z-]+)-(\d+)$/);
+        if (moduleIdMatch) {
+          const topicId = moduleIdMatch[1];
+          const moduleId = notification.referenceId;
+          router.push(`/topics/${topicId}/modules/${moduleId}`);
+        } else {
+          // If no module match, try to navigate to topic
+          const topic = topics.find(t => t.id === notification.referenceId);
+          if (topic) {
+            router.push(`/topics/${topic.id}`);
+          }
+        }
+      } else if (notification.type === 'achievement') {
+        // Navigate to profile or achievements section
+        router.push('/profile');
+      } else if (notification.type === 'friend') {
+        // Switch to multiplayer tab
+        setActiveTab('multiplayer');
+      }
     } catch (err) {
       console.error('Error handling notification press:', err);
+      Alert.alert('Error', 'Failed to update notification status');
     }
   };
   
   const handleMarkAllAsRead = async () => {
-    if (!token) return;
+    if (!user || !user.id) return;
     
     try {
       setLoading(true);
       
-      const response = await fetch(`${API_BASE_URL}/notifications/read-all`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+      // Get all unread notifications
+      const unreadNotifications = notifications.filter(notification => !notification.read);
+      
+      // Update each real notification in Firestore
+      const updatePromises = unreadNotifications.map(notification => {
+        if (notification.id !== 'welcome' && notification.id !== 'streak' && 
+            !notification.id.startsWith('topic-') && !notification.id.startsWith('module-') &&
+            !notification.id.startsWith('points-') && notification.id !== 'multiplayer-intro') {
+          return firestoreDB.collection('notifications').doc(notification.id).update({
+            read: true
+          });
         }
+        return Promise.resolve();
       });
       
-      if (!response.ok) {
-        throw new Error('Failed to mark all notifications as read');
-      }
+      await Promise.all(updatePromises);
       
       // Update local state
       setNotifications(notifications.map(item => ({ ...item, read: true })));
     } catch (err) {
       console.error('Error marking all notifications as read:', err);
+      Alert.alert('Error', 'Failed to mark all notifications as read');
     } finally {
       setLoading(false);
     }
   };
   
   const handleChallengePress = () => {
-    // In a real app, this would open a friend selection modal
-    console.log('Challenge a friend');
+    Alert.alert(
+      'Challenge a Friend',
+      'Select a friend to challenge to a financial knowledge quiz!',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Invite Friends', 
+          onPress: () => console.log('Invite friends to use the app')
+        }
+      ]
+    );
   };
   
-  const handleSharePress = () => {
-    // In a real app, this would open the share dialog
-    console.log('Share app');
+  const handleSharePress = async () => {
+    Alert.alert(
+      'Share App',
+      'Share Lajan Learning with your friends and learn together!',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Share', 
+          onPress: () => console.log('Share app functionality would go here')
+        }
+      ]
+    );
   };
   
   const renderNotificationsTab = () => (

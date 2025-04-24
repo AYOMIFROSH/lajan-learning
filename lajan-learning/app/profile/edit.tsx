@@ -16,6 +16,8 @@ import Button from '@/components/Button';
 import Input from '@/components/Input';
 import { User, Mail, Camera, ArrowLeft, Check } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { firebase, firestoreDB } from '@/firebase/config';
+import { createNotification } from '@/services/notifictaion-service';
 
 export default function EditProfileScreen() {
   const router = useRouter();
@@ -45,11 +47,32 @@ export default function EditProfileScreen() {
       // Allow empty bio to be saved as an empty string, not as undefined
       const sanitizedBio = bio || '';
 
+      // Check if learning style has changed
+      const isLearningStyleChanged = user?.learningStyle !== learningStyle;
+
       await updateUser({
         name: sanitizedName,
         bio: sanitizedBio,
         learningStyle,
       });
+
+      // Create notification for first-time learning style selection
+      if (user?.id && isLearningStyleChanged) {
+        try {
+          // Only create notification if learning style was previously not set or has changed
+          if (!user.learningStyle || isLearningStyleChanged) {
+            await createNotification(
+              user.id,
+              "Learning Style Updated",
+              `Your learning style is now set to ${learningStyle === 'visual' ? 'Visual' : 'Practical'} Learner. Content will be tailored to your preferences.`,
+              'achievement'
+            );
+          }
+        } catch (notifError) {
+          console.error('Error creating notification:', notifError);
+          // Non-critical error, don't show alert to user
+        }
+      }
 
       Alert.alert('Success', 'Profile updated successfully', [
         { text: 'OK', onPress: () => router.back() }
@@ -102,6 +125,22 @@ export default function EditProfileScreen() {
         try {
           // Call the uploadAvatar function from the auth store
           await uploadAvatar(formData);
+          
+          // Create notification for avatar update
+          if (user?.id) {
+            try {
+              await createNotification(
+                user.id,
+                "Profile Picture Updated",
+                "You've successfully updated your profile picture!",
+                'achievement'
+              );
+            } catch (notifError) {
+              console.error('Error creating avatar notification:', notifError);
+              // Non-critical error, don't show alert to user
+            }
+          }
+          
           Alert.alert('Success', 'Profile picture updated successfully');
         } catch (error) {
           console.error('Error uploading avatar:', error);
@@ -115,6 +154,9 @@ export default function EditProfileScreen() {
       Alert.alert('Error', 'An error occurred while selecting the image.');
     }
   };
+
+  // Helper function to determine if the learning style has been selected
+  const isLearningStyleSelected = learningStyle === 'visual' || learningStyle === 'practical';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -179,7 +221,7 @@ export default function EditProfileScreen() {
 
           <Input
             label="Bio"
-            placeholder={bio ? "Tell us about yourself" : "Share something about yourself..."}
+            placeholder="Tell us about yourself"
             value={bio}
             onChangeText={setBio}
             multiline={true}
@@ -267,6 +309,7 @@ const styles = StyleSheet.create({
   avatarLoading: {
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: colors.gray,
   },
   loadingText: {
     fontSize: 12,

@@ -1,51 +1,121 @@
-// components/NetworkErrorBanner.tsx
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { AlertCircle, X } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Animated, TouchableOpacity } from 'react-native';
 import colors from '@/constants/colors';
+import { WifiOff, X } from 'lucide-react-native';
 
 interface NetworkErrorBannerProps {
-  message?: string;
-  onDismiss: () => void;
+  message: string;
+  visible: boolean;
+  onDismiss?: () => void;
+  autoDismiss?: boolean;
+  autoDismissTime?: number;
 }
 
 const NetworkErrorBanner: React.FC<NetworkErrorBannerProps> = ({ 
-  message = "Network connection issue. Using offline mode.", 
-  onDismiss 
+  message, 
+  visible, 
+  onDismiss,
+  autoDismiss = true,
+  autoDismissTime = 5000
 }) => {
+  const [animation] = useState(new Animated.Value(0));
+  
+  useEffect(() => {
+    if (visible) {
+      // Animate banner in
+      Animated.timing(animation, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+      
+      // Set auto-dismiss timer if enabled
+      if (autoDismiss && onDismiss) {
+        const timer = setTimeout(() => {
+          handleDismiss();
+        }, autoDismissTime);
+        
+        return () => clearTimeout(timer);
+      }
+    } else {
+      // Animate banner out
+      Animated.timing(animation, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [visible]);
+  
+  const handleDismiss = () => {
+    Animated.timing(animation, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start(() => {
+      if (onDismiss) onDismiss();
+    });
+  };
+  
+  if (!visible) return null;
+  
   return (
-    <View style={styles.container}>
+    <Animated.View 
+      style={[
+        styles.container,
+        {
+          transform: [
+            {
+              translateY: animation.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-100, 0],
+              }),
+            },
+          ],
+          opacity: animation,
+        },
+      ]}
+    >
       <View style={styles.iconContainer}>
-        <AlertCircle size={20} color="#fff" />
+        <WifiOff size={18} color="#fff" />
       </View>
       <Text style={styles.message}>{message}</Text>
-      <TouchableOpacity onPress={onDismiss} style={styles.dismissButton}>
-        <X size={16} color="#fff" />
-      </TouchableOpacity>
-    </View>
+      {onDismiss && (
+        <TouchableOpacity style={styles.closeButton} onPress={handleDismiss}>
+          <X size={16} color="#fff" />
+        </TouchableOpacity>
+      )}
+    </Animated.View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     backgroundColor: colors.error,
-    padding: 10,
+    padding: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    borderRadius: 8,
-    marginHorizontal: 16,
-    marginBottom: 16,
+    shadowColor: colors.dark,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+    zIndex: 1000,
   },
   iconContainer: {
     marginRight: 8,
   },
   message: {
-    color: '#fff',
     flex: 1,
     fontSize: 14,
+    color: '#fff',
+    fontWeight: '500',
   },
-  dismissButton: {
+  closeButton: {
     padding: 4,
   },
 });
