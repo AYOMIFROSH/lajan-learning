@@ -1,5 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { firebase, firestoreDB } from '@/firebase/config';
+import colors from '@/constants/colors';
 
 interface Props {
   children: React.ReactNode;
@@ -11,66 +13,29 @@ interface State {
   error: Error | null;
 }
 
-const IFRAME_ID = 'rork-web-preview';
-
-const webTargetOrigins = [
-  "http://localhost:3000",
-  "https://rorkai.com",
-  "https://rork.app",
-];    
-
-function sendErrorToIframeParent(error: any, errorInfo?: any) {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    console.debug('Sending error to parent:', {
-      error,
-      errorInfo,
-      referrer: document.referrer
-    });
-
-    const errorMessage = {
-      type: 'ERROR',
+// Log error to Firebase
+async function logErrorToFirebase(error: any, errorInfo?: any) {
+  try {
+    // Get the current user if logged in
+    const currentUser = firebase.auth().currentUser;
+    const userId = currentUser?.uid || 'unknown-user';
+    
+    // Log to Firestore for analytics
+    await firestoreDB.collection('error_logs').add({
+      userId,
       error: {
         message: error?.message || error?.toString() || 'Unknown error',
         stack: error?.stack,
         componentStack: errorInfo?.componentStack,
-        timestamp: new Date().toISOString(),
       },
-      iframeId: IFRAME_ID,
-    };
-
-    try {
-      window.parent.postMessage(
-        errorMessage,
-        webTargetOrigins.includes(document.referrer) ? document.referrer : '*'
-      );
-    } catch (postMessageError) {
-      console.error('Failed to send error to parent:', postMessageError);
-    }
+      platform: 'ios',
+      timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    
+    console.log('Error logged to Firebase successfully');
+  } catch (logError) {
+    console.error('Failed to log error to Firebase:', logError);
   }
-}
-
-if (Platform.OS === 'web' && typeof window !== 'undefined') {
-  window.addEventListener('error', (event) => {
-    event.preventDefault();
-    const errorDetails = event.error ?? {
-      message: event.message ?? 'Unknown error',
-      filename: event.filename ?? 'Unknown file',
-      lineno: event.lineno ?? 'Unknown line',
-      colno: event.colno ?? 'Unknown column'
-    };
-    sendErrorToIframeParent(errorDetails);
-  }, true);
-
-  window.addEventListener('unhandledrejection', (event) => {
-    event.preventDefault();
-    sendErrorToIframeParent(event.reason);
-  }, true);
-
-  const originalConsoleError = console.error;
-  console.error = (...args) => {
-    sendErrorToIframeParent(args.join(' '));
-    originalConsoleError.apply(console, args);
-  };
 }
 
 export class ErrorBoundary extends React.Component<Props, State> {
@@ -84,10 +49,15 @@ export class ErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    sendErrorToIframeParent(error, errorInfo);
+    logErrorToFirebase(error, errorInfo);
+    
     if (this.props.onError) {
       this.props.onError(error, errorInfo);
     }
+  }
+
+  handleRetry = () => {
+    this.setState({ hasError: false, error: null });
   }
 
   render() {
@@ -97,11 +67,16 @@ export class ErrorBoundary extends React.Component<Props, State> {
           <View style={styles.content}>
             <Text style={styles.title}>Something went wrong</Text>
             <Text style={styles.subtitle}>{this.state.error?.message}</Text>
-            {Platform.OS !== 'web' && (
-              <Text style={styles.description}>
-                Please check your device logs for more details.
-              </Text>
-            )}
+            <Text style={styles.description}>
+              Please try again or restart the app if the problem persists.
+            </Text>
+            
+            <TouchableOpacity 
+              style={styles.retryButton}
+              onPress={this.handleRetry}
+            >
+              <Text style={styles.retryButtonText}>Try Again</Text>
+            </TouchableOpacity>
           </View>
         </View>
       );
@@ -114,7 +89,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
   },
   content: {
     flex: 1,
@@ -123,22 +98,36 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   title: {
-    fontSize: 36,
+    fontSize: 28,
     textAlign: 'center',
     fontWeight: 'bold',
-    marginBottom: 8,
+    color: colors.dark,
+    marginBottom: 16,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 16,
+    color: colors.error,
     marginBottom: 12,
     textAlign: 'center',
   },
   description: {
     fontSize: 14,
-    color: '#666',
+    color: colors.darkGray,
     textAlign: 'center',
     marginTop: 8,
+    lineHeight: 20,
+  },
+  retryButton: {
+    marginTop: 24,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: colors.light,
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 }); 
 
