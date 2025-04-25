@@ -29,7 +29,8 @@ import {
   Edit,
   Shield,
   Lock,
-  Bell
+  Bell,
+  Calendar
 } from 'lucide-react-native';
 import { firebase, firestoreDB } from '@/firebase/config';
 
@@ -193,37 +194,59 @@ export default function ProfileScreen() {
     </Modal>
   );
 
+  // Display badges for user profile
+  const renderUserBadges = () => {
+    const badges: JSX.Element[] = [];
+    
+    // Learning style badge
+    if (user?.learningStyle) {
+      badges.push(
+        <View key="learningStyle" style={styles.userBadge}>
+          <Text style={styles.userBadgeText}>
+            {user.learningStyle === 'visual' ? 'Visual Learner' : 'Practical Learner'}
+          </Text>
+        </View>
+      );
+    }
+    
+    // Age badge - only show for minors (for privacy of adults)
+    if (user?.isMinor) {
+      badges.push(
+        <View key="age" style={[styles.userBadge, { backgroundColor: `${colors.info}20` }]}>
+          <Text style={[styles.userBadgeText, { color: colors.info }]}>
+            Under 18
+          </Text>
+        </View>
+      );
+    }
+    
+    return badges.length > 0 ? (
+      <View style={styles.userBadgesContainer}>
+        {badges}
+      </View>
+    ) : null;
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       {/* Render logout loading modal */}
       <LogoutLoadingModal />
-      <ScrollView style={styles.container}>
+      <ScrollView style={styles.container} contentInsetAdjustmentBehavior="automatic">
         <View style={styles.header}>
           <View style={styles.profileInfo}>
-            {/* <View style={styles.avatarContainer}>
-              <Image
-                source={{
-                  uri: user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60'
-                }}
-                style={styles.avatar}
-              />
-              <TouchableOpacity
-                style={styles.editAvatarButton}
-                onPress={handleEditProfile}
-              >
-                <Edit size={16} color={colors.light} />
-              </TouchableOpacity>
-            </View> */}
-
+            {/* Profile avatar would go here if implemented */}
             <View style={styles.userInfo}>
               <Text style={styles.userName}>{user?.name || 'User'}</Text>
               <Text style={styles.userEmail}>{user?.email || 'user@example.com'}</Text>
-
-              {user?.learningStyle && (
-                <View style={styles.learningStyleBadge}>
-                  <Text style={styles.learningStyleText}>
-                    {user.learningStyle === 'visual' ? 'Visual Learner' : 'Practical Learner'}
-                  </Text>
+              
+              {/* Display user badges */}
+              {renderUserBadges()}
+              
+              {/* Display age if available */}
+              {user?.age && (
+                <View style={styles.ageContainer}>
+                  <Calendar size={16} color={colors.darkGray} />
+                  <Text style={styles.ageText}>{user.age} years old</Text>
                 </View>
               )}
             </View>
@@ -382,7 +405,8 @@ export default function ProfileScreen() {
           </TouchableOpacity>
         </View>
 
-        {user?.isMinor && (
+        {/* Show Guardian section for minors or those with already connected guardians */}
+        {(user?.isMinor || user?.guardianEmail) && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Guardian</Text>
 
@@ -508,6 +532,34 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.darkGray,
     marginBottom: 8,
+  },
+  userBadgesContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 8,
+  },
+  userBadge: {
+    backgroundColor: `${colors.primary}20`,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginRight: 8,
+    marginBottom: 8,
+  },
+  userBadgeText: {
+    fontSize: 12,
+    color: colors.primary,
+    fontWeight: '500',
+  },
+  ageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  ageText: {
+    fontSize: 14,
+    color: colors.darkGray,
+    marginLeft: 6,
   },
   bioContainer: {
     backgroundColor: colors.card,

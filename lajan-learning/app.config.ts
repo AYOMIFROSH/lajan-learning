@@ -16,6 +16,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       FIREBASE_STORAGE_BUCKET: process.env.FIREBASE_STORAGE_BUCKET,
       FIREBASE_MESSAGING_SENDER_ID: process.env.FIREBASE_MESSAGING_SENDER_ID,
       FIREBASE_APP_ID: process.env.FIREBASE_APP_ID,
+      GOOGLE_WEB_CLIENT_ID: process.env.GOOGLE_WEB_CLIENT_ID, // Add for Google Sign-In
     },
   
     eas: {
@@ -34,7 +35,46 @@ export default ({ config }: ConfigContext): ExpoConfig => {
           storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
         },
       ],
+      '@react-native-google-signin/google-signin', // Add for Google Sign-In
+      '@invertase/react-native-apple-authentication', // Add for Apple Sign-In
     ],
+    
+    // Update iOS config to include Apple Sign-In
+    ios: {
+      ...base.ios,
+      supportsTablet: true,
+      bundleIdentifier: "com.quinceybernard.lajanlearning",
+      googleServicesFile: "./GoogleService-Info.plist",
+      infoPlist: {
+        ...((base.ios as any)?.infoPlist || {}),
+        ITSAppUsesNonExemptEncryption: false,
+        CFBundleURLTypes: [
+          {
+            CFBundleURLSchemes: [
+              "com.googleusercontent.apps.YOUR_GOOGLE_CLIENT_ID" // Replace with your Google Client ID
+            ]
+          }
+        ],
+        // Add required capabilities for Apple Sign-In
+        UIBackgroundModes: ["remote-notification"],
+        // For Sign in with Apple
+        NSFaceIDUsageDescription: "Allow $(PRODUCT_NAME) to use Face ID to authenticate you",
+      },
+      // Add Apple Sign-In entitlement
+      entitlements: {
+        "com.apple.developer.applesignin": ["Default"]
+      }
+    },
+    
+    // Update Android config for Google Sign-In
+    android: {
+      ...base.android,
+      adaptiveIcon: {
+        foregroundImage: "./assets/images/adaptive-icon.png",
+        backgroundColor: "#ffffff"
+      },
+      package: "com.quinceybernard.lajanlearning", // Make sure the package name matches iOS bundle ID
+      googleServicesFile: "./google-services.json"
+    }
   } as ExpoConfig & { eas: { projectId: string } };
-  
 };

@@ -7,14 +7,16 @@ import {
   SafeAreaView,
   ScrollView,
   Alert,
-  Image
+  Image,
+  KeyboardAvoidingView,
+  Platform
 } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
 import { useAuthStore } from '@/store/auth-store';
 import colors from '@/constants/colors';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
-import { User, Mail, Camera, ArrowLeft, Check } from 'lucide-react-native';
+import { User, Mail, Camera, ArrowLeft, Check, Calendar } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { firebase, firestoreDB } from '@/firebase/config';
 import { createNotification } from '@/services/notifictaion-service';
@@ -27,6 +29,7 @@ export default function EditProfileScreen() {
   const [email, setEmail] = useState(user?.email || '');
   // Initialize bio with empty string if null or undefined to ensure it's always a string
   const [bio, setBio] = useState(user?.bio || '');
+  const [age, setAge] = useState(user?.age?.toString() || '');
   const [learningStyle, setLearningStyle] = useState(user?.learningStyle);
   const [isLoading, setIsLoading] = useState(false);
   const [avatarLoading, setAvatarLoading] = useState(false);
@@ -37,23 +40,38 @@ export default function EditProfileScreen() {
       return;
     }
 
+    // Validate age if provided
+    if (age.trim() !== '') {
+      const ageNumber = parseInt(age, 10);
+      if (isNaN(ageNumber) || ageNumber <= 0 || ageNumber > 120) {
+        Alert.alert('Error', 'Please enter a valid age between 1 and 120');
+        return;
+      }
+    }
+
     setIsLoading(true);
 
     try {
-      console.log({ name, bio, learningStyle });
-
       // Include all updated fields in a single call
       const sanitizedName = name.trim();
       // Allow empty bio to be saved as an empty string, not as undefined
       const sanitizedBio = bio || '';
+      
+      // Convert age string to number, and set isMinor flag
+      const ageNumber = age.trim() !== '' ? parseInt(age, 10) : undefined;
+      const isMinor = ageNumber !== undefined ? ageNumber < 18 : undefined;
 
       // Check if learning style has changed
       const isLearningStyleChanged = user?.learningStyle !== learningStyle;
+      // Check if age has changed
+      const isAgeChanged = user?.age !== ageNumber;
 
       await updateUser({
         name: sanitizedName,
         bio: sanitizedBio,
         learningStyle,
+        age: ageNumber,
+        isMinor
       });
 
       // Create notification for first-time learning style selection
@@ -70,6 +88,23 @@ export default function EditProfileScreen() {
           }
         } catch (notifError) {
           console.error('Error creating notification:', notifError);
+          // Non-critical error, don't show alert to user
+        }
+      }
+
+      // Create notification for age update if it's the first time setting age
+      if (user?.id && isAgeChanged && user?.age === undefined && ageNumber !== undefined) {
+        try {
+          await createNotification(
+            user.id,
+            "Age Information Updated",
+            isMinor 
+              ? "Your account is now set up as a minor account. You can connect a guardian for parental oversight."
+              : "Your age information has been updated successfully.",
+            'achievement'
+          );
+        } catch (notifError) {
+          console.error('Error creating age notification:', notifError);
           // Non-critical error, don't show alert to user
         }
       }
@@ -174,112 +209,135 @@ export default function EditProfileScreen() {
         }}
       />
 
-      <ScrollView style={styles.container}>
-        <View style={styles.avatarSection}>
-          <View style={styles.avatarContainer}>
-            {avatarLoading ? (
-              <View style={[styles.avatar, styles.avatarLoading]}>
-                <Text style={styles.loadingText}>Uploading...</Text>
-              </View>
-            ) : (
-              <Image
-                source={{
-                  uri: user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60'
-                }}
-                style={styles.avatar}
-              />
-            )}
-            <TouchableOpacity
-              style={styles.changeAvatarButton}
-              onPress={handleChangeAvatar}
-              disabled={avatarLoading}
-            >
-              <Camera size={20} color={colors.light} />
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.changePhotoText}>Tap to change photo</Text>
-        </View>
-
-        <View style={styles.form}>
-          <Input
-            label="Name"
-            placeholder="Your name"
-            value={name}
-            onChangeText={setName}
-            leftIcon={<User size={20} color={colors.darkGray} />}
-          />
-
-          <Input
-            label="Email"
-            placeholder="Your email"
-            value={email}
-            onChangeText={setEmail}
-            leftIcon={<Mail size={20} color={colors.darkGray} />}
-            editable={false}
-            containerStyle={styles.disabledInput}
-          />
-
-          <Input
-            label="Bio"
-            placeholder="Tell us about yourself"
-            value={bio}
-            onChangeText={setBio}
-            multiline={true}
-            numberOfLines={4}
-            textAlignVertical="top"
-            style={styles.bioInput}
-            containerStyle={styles.bioInputContainer}
-            wrapperStyle={styles.bioInputWrapper}
-          />
-
-          <View style={styles.learningStyleSection}>
-            <Text style={styles.sectionTitle}>Learning Style</Text>
-            <Text style={styles.sectionDescription}>
-              Your preferred way of learning financial concepts
-            </Text>
-
-            <View style={styles.learningStyleOptions}>
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardAvoidingView}
+      >
+        <ScrollView 
+          style={styles.container}
+          contentContainerStyle={styles.contentContainer}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.avatarSection}>
+            <View style={styles.avatarContainer}>
+              {avatarLoading ? (
+                <View style={[styles.avatar, styles.avatarLoading]}>
+                  <Text style={styles.loadingText}>Uploading...</Text>
+                </View>
+              ) : (
+                <Image
+                  source={{
+                    uri: user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60'
+                  }}
+                  style={styles.avatar}
+                />
+              )}
               <TouchableOpacity
-                style={[
-                  styles.learningStyleOption,
-                  learningStyle === 'visual' && styles.selectedLearningStyle
-                ]}
-                onPress={() => setLearningStyle('visual')}
+                style={styles.changeAvatarButton}
+                onPress={handleChangeAvatar}
+                disabled={avatarLoading}
               >
-                <Text style={[
-                  styles.learningStyleText,
-                  learningStyle === 'visual' && styles.selectedLearningStyleText
-                ]}>
-                  Visual Learner
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.learningStyleOption,
-                  learningStyle === 'practical' && styles.selectedLearningStyle
-                ]}
-                onPress={() => setLearningStyle('practical')}
-              >
-                <Text style={[
-                  styles.learningStyleText,
-                  learningStyle === 'practical' && styles.selectedLearningStyleText
-                ]}>
-                  Practical Learner
-                </Text>
+                <Camera size={20} color={colors.light} />
               </TouchableOpacity>
             </View>
+            <Text style={styles.changePhotoText}>Tap to change photo</Text>
           </View>
 
-          <Button
-            title="Save Changes"
-            onPress={handleSave}
-            variant="primary"
-            isLoading={isLoading}
-            style={styles.saveButton}
-          />
-        </View>
-      </ScrollView>
+          <View style={styles.form}>
+            <Input
+              label="Name"
+              placeholder="Your name"
+              value={name}
+              onChangeText={setName}
+              leftIcon={<User size={20} color={colors.darkGray} />}
+            />
+
+            <Input
+              label="Age"
+              placeholder="Enter your age"
+              value={age}
+              onChangeText={(text) => {
+                // Only allow numeric input
+                if (/^\d*$/.test(text)) {
+                  setAge(text);
+                }
+              }}
+              keyboardType="numeric"
+              leftIcon={<Calendar size={20} color={colors.darkGray} />}
+            />
+
+            <Input
+              label="Email"
+              placeholder="Your email"
+              value={email}
+              onChangeText={setEmail}
+              leftIcon={<Mail size={20} color={colors.darkGray} />}
+              editable={false}
+              containerStyle={styles.disabledInput}
+            />
+
+            <Input
+              label="Bio"
+              placeholder="Tell us about yourself"
+              value={bio}
+              onChangeText={setBio}
+              multiline={true}
+              numberOfLines={4}
+              textAlignVertical="top"
+              style={styles.bioInput}
+              containerStyle={styles.bioInputContainer}
+              wrapperStyle={styles.bioInputWrapper}
+            />
+
+            <View style={styles.learningStyleSection}>
+              <Text style={styles.sectionTitle}>Learning Style</Text>
+              <Text style={styles.sectionDescription}>
+                Your preferred way of learning financial concepts
+              </Text>
+
+              <View style={styles.learningStyleOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.learningStyleOption,
+                    learningStyle === 'visual' && styles.selectedLearningStyle
+                  ]}
+                  onPress={() => setLearningStyle('visual')}
+                >
+                  <Text style={[
+                    styles.learningStyleText,
+                    learningStyle === 'visual' && styles.selectedLearningStyleText
+                  ]}>
+                    Visual Learner
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.learningStyleOption,
+                    learningStyle === 'practical' && styles.selectedLearningStyle
+                  ]}
+                  onPress={() => setLearningStyle('practical')}
+                >
+                  <Text style={[
+                    styles.learningStyleText,
+                    learningStyle === 'practical' && styles.selectedLearningStyleText
+                  ]}>
+                    Practical Learner
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <Button
+              title="Save Changes"
+              onPress={handleSave}
+              variant="primary"
+              isLoading={isLoading}
+              style={styles.saveButton}
+            />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -289,9 +347,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  keyboardAvoidingView: {
+    flex: 1,
+  },
   container: {
     flex: 1,
+  },
+  contentContainer: {
     padding: 16,
+    paddingBottom: 40, // Add extra padding at the bottom for keyboard
   },
   avatarSection: {
     alignItems: 'center',

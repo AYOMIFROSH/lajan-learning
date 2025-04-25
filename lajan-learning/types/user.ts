@@ -8,13 +8,14 @@ export interface User {
   avatar?: string;
   bio?: string; 
   learningStyle: 'visual' | 'practical' | null;
-    preferredTopics: string[];
+  preferredTopics: string[];
   knowledgeLevel: number;
   points: number;
   streak: number;
   completedLessons: string[];
   level: number;
-  isMinor: boolean;
+  isMinor: boolean | undefined;
+  age?: number; // Added age field
   guardianEmail?: string;
   guardianConnected: boolean;
   createdAt: string;
@@ -27,6 +28,7 @@ export interface AuthState {
   isOnboardingComplete: boolean; 
   isLoading: boolean;
   error: string | null;
+  needsAgeInput: boolean; // Added flag to track if we need to show age input popup
 }
 
 export interface LearningProgress {

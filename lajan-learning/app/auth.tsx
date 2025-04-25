@@ -16,7 +16,8 @@ import { useAuthStore } from '@/store/auth-store';
 import colors from '@/constants/colors';
 import Button from '@/components/Button';
 import Input from '@/components/Input';
-import { Mail, Lock, User, ArrowLeft } from 'lucide-react-native';
+import SocialLoginButton from '@/components/SocialLoginButton';
+import { Mail, Lock, User, ArrowLeft, Calendar } from 'lucide-react-native';
 
 // Firebase imports - using React Native Firebase
 import { firebase, firebaseAuth, firestoreDB } from '@/firebase/config';
@@ -26,15 +27,27 @@ type AuthMode = 'login' | 'register';
 export default function AuthScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { login, register, resetPassword, error: storeError, isLoading: storeLoading, isAuthenticated, user } = useAuthStore();
+  const { 
+    login, 
+    register, 
+    resetPassword, 
+    signInWithGoogle, 
+    signInWithApple, 
+    error: storeError, 
+    isLoading: storeLoading, 
+    isAuthenticated, 
+    user 
+  } = useAuthStore();
 
   // Local state
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [age, setAge] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [socialLoading, setSocialLoading] = useState<'google' | 'apple' | null>(null);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -61,6 +74,7 @@ export default function AuthScreen() {
   useEffect(() => {
     if (storeError) {
       setLocalError(storeError);
+      setSocialLoading(null);
     }
   }, [storeError]);
 
@@ -70,6 +84,7 @@ export default function AuthScreen() {
     setEmail('');
     setPassword('');
     setName('');
+    setAge('');
     setLocalError(null);
   };
 
@@ -119,17 +134,52 @@ export default function AuthScreen() {
           return;
         }
         
-        // Use the register method from auth store
-        await register(email, password, name);
+        if (!age || isNaN(Number(age)) || Number(age) <= 0) {
+          setLocalError('Please enter a valid age');
+          setIsSubmitting(false);
+          return;
+        }
         
-        // Navigate directly to main app instead of verification
-        router.replace('/(tabs)');
+        // Parse age to number
+        const ageNumber = parseInt(age, 10);
+        const isMinor = ageNumber < 18;
+        
+        // Use the register method from auth store with age information
+        await register(email, password, name, ageNumber, isMinor);
+        
+        // Navigation will be handled by auth listener
       }
     } catch (error: any) {
       console.error('Auth error:', error);
       setLocalError(error.message || 'An error occurred');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    try {
+      setLocalError(null);
+      setSocialLoading('google');
+      await signInWithGoogle();
+      // Navigation will be handled by auth listener
+    } catch (error: any) {
+      console.error('Google login error:', error);
+      setLocalError(error.message || 'Failed to login with Google');
+      setSocialLoading(null);
+    }
+  };
+
+  const handleAppleLogin = async () => {
+    try {
+      setLocalError(null);
+      setSocialLoading('apple');
+      await signInWithApple();
+      // Navigation will be handled by auth listener
+    } catch (error: any) {
+      console.error('Apple login error:', error);
+      setLocalError(error.message || 'Failed to login with Apple');
+      setSocialLoading(null);
     }
   };
 
@@ -142,7 +192,11 @@ export default function AuthScreen() {
     if (mode === 'login') {
       return email.trim() !== '' && password.trim() !== '';
     } else {
-      return email.trim() !== '' && password.trim() !== '' && name.trim() !== '';
+      return email.trim() !== '' && 
+             password.trim() !== '' && 
+             name.trim() !== '' && 
+             age.trim() !== '' && 
+             !isNaN(Number(age));
     }
   };
 
@@ -222,15 +276,56 @@ export default function AuthScreen() {
             </Text>
 
             <View style={styles.formContainer}>
-              {mode === 'register' && (
-                <Input
-                  label="Full Name"
-                  placeholder="Enter your name"
-                  value={name}
-                  onChangeText={setName}
-                  leftIcon={<User size={20} color={colors.darkGray} />}
-                  autoCapitalize="words"
+              {/* Social Login Buttons */}
+              <View style={styles.socialButtonsContainer}>
+                <SocialLoginButton 
+                  provider="google" 
+                  onPress={handleGoogleLogin}
+                  isLoading={socialLoading === 'google' || storeLoading}
+                  disabled={isSubmitting || (storeLoading && socialLoading !== 'google')}
                 />
+                
+                <SocialLoginButton 
+                  provider="apple" 
+                  onPress={handleAppleLogin}
+                  isLoading={socialLoading === 'apple' || storeLoading}
+                  disabled={isSubmitting || (storeLoading && socialLoading !== 'apple')}
+                />
+              </View>
+
+              {/* Divider with "or" text */}
+              <View style={styles.dividerContainer}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              {/* Email & Password Fields */}
+              {mode === 'register' && (
+                <>
+                  <Input
+                    label="Full Name"
+                    placeholder="Enter your name"
+                    value={name}
+                    onChangeText={setName}
+                    leftIcon={<User size={20} color={colors.darkGray} />}
+                    autoCapitalize="words"
+                  />
+                  
+                  <Input
+                    label="Age"
+                    placeholder="Enter your age"
+                    value={age}
+                    onChangeText={(text) => {
+                      // Only allow numeric input
+                      if (/^\d*$/.test(text)) {
+                        setAge(text);
+                      }
+                    }}
+                    keyboardType="numeric"
+                    leftIcon={<Calendar size={20} color={colors.darkGray} />}
+                  />
+                </>
               )}
 
               <Input
@@ -262,7 +357,7 @@ export default function AuthScreen() {
                 variant="primary"
                 size="large"
                 disabled={!isFormValid() || storeLoading || isSubmitting}
-                isLoading={isSubmitting || storeLoading}
+                isLoading={isSubmitting || (storeLoading && !socialLoading)}
                 style={styles.submitButton}
               />
 
@@ -362,6 +457,24 @@ const styles = StyleSheet.create({
   formContainer: {
     width: '100%',
     maxWidth: 400,
+  },
+  socialButtonsContainer: {
+    marginBottom: 24,
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  dividerText: {
+    marginHorizontal: 16,
+    color: colors.darkGray,
+    fontSize: 14,
   },
   errorText: {
     color: colors.error,

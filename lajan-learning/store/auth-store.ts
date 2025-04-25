@@ -3,20 +3,40 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { User, AuthState, LearningProgress } from '@/types/user';
 import 'react-native-get-random-values';
+import { Platform } from 'react-native';
 
 // Firebase imports
 import { firebase, firebaseAuth, firestoreDB, firebaseStorage } from '@/firebase/config';
+import auth from '@react-native-firebase/auth';
+
+// Google Sign-In
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
+
+// Apple Authentication (iOS only)
+import { appleAuth } from '@invertase/react-native-apple-authentication';
+
+// Initialize Google Sign-In
+GoogleSignin.configure({
+  webClientId: '<<YOUR_WEB_CLIENT_ID>>', // Replace with your web client ID from Firebase console
+});
 
 interface AuthStore extends AuthState {
   // Authentication
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  register: (email: string, password: string, name: string) => Promise<{ user: User; token: string; }>;
+  register: (email: string, password: string, name: string, age?: number, isMinor?: boolean) => Promise<{ user: User; token: string; }>;
   resetPassword: (email: string) => Promise<void>;
   initializeAuthListener: () => (() => void) | undefined;
   clearPersistedState: () => Promise<void>;
   token: string | null;
   autoLoginAttempted: boolean;
+  needsAgeInput: boolean;
+  setNeedsAgeInput: (value: boolean) => void;
+  updateUserAge: (age: number) => Promise<void>;
+  
+  // Social Authentication
+  signInWithGoogle: () => Promise<void>;
+  signInWithApple: () => Promise<void>;
 
   // Onboarding status flags
   isOnboardingComplete: boolean;
@@ -61,7 +81,8 @@ const mapFirebaseUser = async (firebaseUser: any): Promise<User> => {
       guardianConnected: userData.guardianConnected || false,
       createdAt: userData.createdAt || new Date().toISOString(),
       level: userData.level || 0,
-      isMinor: userData.isMinor || false,
+      isMinor: userData.isMinor === undefined ? undefined : userData.isMinor,
+      age: userData.age,
       lastActive: userData.lastActive || null,
     };
   } catch (error) {
@@ -84,9 +105,45 @@ const mapFirebaseUser = async (firebaseUser: any): Promise<User> => {
       guardianEmail: undefined,
       guardianConnected: false,
       level: 0,
-      isMinor: false,
+      isMinor: undefined,
+      age: undefined,
       lastActive: null,
     };
+  }
+};
+
+// Helper to create or update user document in Firestore
+const createOrUpdateUserInFirestore = async (firebaseUser: any, additionalData = {}) => {
+  try {
+    const userRef = firestoreDB.collection('users').doc(firebaseUser.uid);
+    const userDoc = await userRef.get();
+    
+    if (userDoc.exists) {
+      // User exists, update last login
+      await userRef.update({
+        lastActive: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        ...additionalData
+      });
+    } else {
+      // New user, create document
+      await userRef.set({
+        email: firebaseUser.email || '',
+        name: firebaseUser.displayName || '',
+        avatar: firebaseUser.photoURL || '',
+        role: 'user',
+        points: 0,
+        verified: true,
+        completedLessons: [],
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        lastActive: firebase.firestore.FieldValue.serverTimestamp(),
+        ...additionalData
+      });
+    }
+  } catch (error) {
+    console.error('Error creating/updating user in Firestore:', error);
+    throw error;
   }
 };
 
@@ -100,9 +157,14 @@ export const useAuthStore = create<AuthStore>()(
       token: null,
       autoLoginAttempted: false,
       learningProgress: null,
+      needsAgeInput: false,
 
       // Add new onboarding status flag
       isOnboardingComplete: false,
+
+      setNeedsAgeInput: (value) => {
+        set({ needsAgeInput: value });
+      },
 
       setOnboardingComplete: (isComplete) => {
         set({ isOnboardingComplete: isComplete });
@@ -119,7 +181,8 @@ export const useAuthStore = create<AuthStore>()(
             error: null,
             autoLoginAttempted: true, // Mark that we've attempted login
             learningProgress: null,
-            isOnboardingComplete: false // Reset onboarding flag
+            isOnboardingComplete: false, // Reset onboarding flag
+            needsAgeInput: false
           });
           console.log('Persisted state cleared successfully');
         } catch (error) {
@@ -152,6 +215,9 @@ export const useAuthStore = create<AuthStore>()(
                 user.knowledgeLevel !== undefined
               );
 
+              // Check if age is not set, and we need to show age input popup
+              const needsToInputAge = user.age === undefined;
+
               set({
                 user,
                 token,
@@ -159,6 +225,7 @@ export const useAuthStore = create<AuthStore>()(
                 isLoading: false,
                 error: null,
                 isOnboardingComplete: userHasCompletedOnboarding,
+                needsAgeInput: needsToInputAge
               });
 
               // Fetch learning progress
@@ -190,7 +257,8 @@ export const useAuthStore = create<AuthStore>()(
               isAuthenticated: false,
               isLoading: false,
               error: null,
-              isOnboardingComplete: false
+              isOnboardingComplete: false,
+              needsAgeInput: false
             });
           }
         });
@@ -220,6 +288,9 @@ export const useAuthStore = create<AuthStore>()(
             user.knowledgeLevel !== undefined
           );
 
+          // Check if age is not set, and we need to show age input popup
+          const needsToInputAge = user.age === undefined;
+
           set({
             user,
             token,
@@ -228,9 +299,11 @@ export const useAuthStore = create<AuthStore>()(
             error: null,
             autoLoginAttempted: true,
             isOnboardingComplete: userHasCompletedOnboarding,
+            needsAgeInput: needsToInputAge
           });
 
           console.log("Onboarding complete:", userHasCompletedOnboarding);
+          console.log("Needs age input:", needsToInputAge);
           await get().fetchLearningProgress();
 
           // Initialize progress store with user ID and token
@@ -266,6 +339,191 @@ export const useAuthStore = create<AuthStore>()(
         }
       },
 
+      // Sign in with Google
+      signInWithGoogle: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          // Check if your device supports Google Play
+          await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+          
+          // Get the user ID token
+          await GoogleSignin.signIn();
+          const { idToken } = await GoogleSignin.getTokens();
+          
+          // Create a Google credential with the token
+          const googleCredential = auth.GoogleAuthProvider.credential(idToken);
+          
+          // Sign-in the user with the credential
+          const userCredential = await auth().signInWithCredential(googleCredential);
+          const firebaseUser = userCredential.user;
+          
+          // Create or update user in Firestore
+          await createOrUpdateUserInFirestore(firebaseUser);
+          
+          // Get ID token for API calls
+          const token = await firebaseUser.getIdToken();
+          
+          // Map Firebase user to our User type
+          const user = await mapFirebaseUser(firebaseUser);
+          
+          // Determine if onboarding is complete
+          const userHasCompletedOnboarding = !!(
+            user.learningStyle && 
+            user.preferredTopics?.length > 0 && 
+            user.knowledgeLevel !== undefined
+          );
+          
+          // Check if age is not set, and we need to show age input popup
+          const needsToInputAge = user.age === undefined;
+          
+          set({
+            user,
+            token,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+            autoLoginAttempted: true,
+            isOnboardingComplete: userHasCompletedOnboarding,
+            needsAgeInput: needsToInputAge
+          });
+          
+          console.log("Google Sign-in successful, onboarding complete:", userHasCompletedOnboarding);
+          await get().fetchLearningProgress();
+          
+          // Initialize progress store with user ID and token
+          if (user.id && token) {
+            try {
+              const progressStore = await import('./progress-store').then(m => m.useProgressStore);
+              await progressStore.getState().initializeProgress(user.id, token);
+            } catch (error) {
+              console.error("Failed to initialize progress store:", error);
+            }
+          }
+        } catch (error: any) {
+          console.error('Google Sign-in error:', error);
+          let errorMessage = 'Failed to sign in with Google';
+          
+          if (error.code === 'SIGN_IN_CANCELLED') {
+            errorMessage = 'Google sign in was cancelled';
+          } else if (error.code === 'PLAY_SERVICES_NOT_AVAILABLE') {
+            errorMessage = 'Google Play Services not available or outdated';
+          }
+          
+          set({
+            error: errorMessage,
+            isLoading: false,
+            autoLoginAttempted: true
+          });
+        }
+      },
+      
+      // Sign in with Apple (iOS only)
+      signInWithApple: async () => {
+        set({ isLoading: true, error: null });
+        
+        // Only available on iOS
+        if (Platform.OS !== 'ios') {
+          set({
+            error: 'Apple Sign-In is only available on iOS devices',
+            isLoading: false
+          });
+          return;
+        }
+        
+        try {
+          // Start the Apple authentication flow
+          const appleAuthRequestResponse = await appleAuth.performRequest({
+            requestedOperation: appleAuth.Operation.LOGIN,
+            requestedScopes: [appleAuth.Scope.EMAIL, appleAuth.Scope.FULL_NAME]
+          });
+          
+          // Ensure Apple returned a user identityToken
+          if (!appleAuthRequestResponse.identityToken) {
+            throw new Error('Apple Sign-In failed - no identity token returned');
+          }
+          
+          // Create a Firebase credential from the response
+          const { identityToken, nonce } = appleAuthRequestResponse;
+          const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce);
+          
+          // Sign in with the credential
+          const userCredential = await auth().signInWithCredential(appleCredential);
+          const firebaseUser = userCredential.user;
+          
+          // Apple may not always return the user's name, so we need to handle this case
+          let name = firebaseUser.displayName || '';
+          
+          // If we have the full name from the Apple response and the user doesn't already have a name set
+          if (appleAuthRequestResponse.fullName && (!name || name === '')) {
+            const { givenName, familyName } = appleAuthRequestResponse.fullName;
+            name = [givenName, familyName].filter(Boolean).join(' ');
+            
+            // Update the user's profile with the name if it was provided
+            if (name && name !== '') {
+              await firebaseUser.updateProfile({ displayName: name });
+            }
+          }
+          
+          // Create or update user in Firestore
+          await createOrUpdateUserInFirestore(firebaseUser, { 
+            name: name || 'Apple User' // Provide a default name if none is available
+          });
+          
+          // Get ID token for API calls
+          const token = await firebaseUser.getIdToken();
+          
+          // Map Firebase user to our User type
+          const user = await mapFirebaseUser(firebaseUser);
+          
+          // Determine if onboarding is complete
+          const userHasCompletedOnboarding = !!(
+            user.learningStyle && 
+            user.preferredTopics?.length > 0 && 
+            user.knowledgeLevel !== undefined
+          );
+          
+          // Check if age is not set, and we need to show age input popup
+          const needsToInputAge = user.age === undefined;
+          
+          set({
+            user,
+            token,
+            isAuthenticated: true,
+            isLoading: false,
+            error: null,
+            autoLoginAttempted: true,
+            isOnboardingComplete: userHasCompletedOnboarding,
+            needsAgeInput: needsToInputAge
+          });
+          
+          console.log("Apple Sign-in successful, onboarding complete:", userHasCompletedOnboarding);
+          await get().fetchLearningProgress();
+          
+          // Initialize progress store with user ID and token
+          if (user.id && token) {
+            try {
+              const progressStore = await import('./progress-store').then(m => m.useProgressStore);
+              await progressStore.getState().initializeProgress(user.id, token);
+            } catch (error) {
+              console.error("Failed to initialize progress store:", error);
+            }
+          }
+        } catch (error: any) {
+          console.error('Apple Sign-in error:', error);
+          let errorMessage = 'Failed to sign in with Apple';
+          
+          if (error.code === 'ERR_CANCELED') {
+            errorMessage = 'Apple sign in was cancelled';
+          }
+          
+          set({
+            error: errorMessage,
+            isLoading: false,
+            autoLoginAttempted: true
+          });
+        }
+      },
+
       logout: async () => {
         try {
           // Before logout, try to sync progress
@@ -278,6 +536,16 @@ export const useAuthStore = create<AuthStore>()(
             }
           } catch (syncError) {
             console.warn('Failed to sync progress before logout:', syncError);
+          }
+
+          // Sign out from Google if user was signed in with Google
+          try {
+            const isSignedInWithGoogle = !!(await GoogleSignin.getCurrentUser());
+            if (isSignedInWithGoogle) {
+              await GoogleSignin.signOut();
+            }
+          } catch (googleError) {
+            console.warn('Google Sign-out error:', googleError);
           }
 
           // Sign out from Firebase
@@ -311,7 +579,7 @@ export const useAuthStore = create<AuthStore>()(
         }
       },
 
-      register: async (email, password, name) => {
+      register: async (email, password, name, age, isMinor) => {
         set({ isLoading: true, error: null });
         try {
           // Create user with Firebase
@@ -328,6 +596,8 @@ export const useAuthStore = create<AuthStore>()(
             role: 'user',
             points: 0,
             verified: true, // Set verified to true by default
+            age: age || null,
+            isMinor: isMinor !== undefined ? isMinor : null,
             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
           });
@@ -348,7 +618,8 @@ export const useAuthStore = create<AuthStore>()(
             isLoading: false,
             error: null,
             autoLoginAttempted: true,
-            isOnboardingComplete: false
+            isOnboardingComplete: false,
+            needsAgeInput: false
           });
 
           return { user, token };
@@ -372,6 +643,51 @@ export const useAuthStore = create<AuthStore>()(
             autoLoginAttempted: true
           });
           throw new Error(errorMessage);
+        }
+      },
+
+      // New method to update user age
+      updateUserAge: async (age) => {
+        const { user } = get();
+        set({ isLoading: true, error: null });
+
+        try {
+          if (!user || !user.id) {
+            throw new Error('No authenticated user found');
+          }
+
+          // Calculate if the user is a minor (under 18)
+          const isMinor = age < 18;
+
+          // Update in Firestore
+          await firestoreDB.collection('users').doc(user.id).update({
+            age: age,
+            isMinor: isMinor,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          });
+
+          // Update local state
+          const updatedUser = {
+            ...user,
+            age: age,
+            isMinor: isMinor
+          };
+
+          set({
+            user: updatedUser,
+            isLoading: false,
+            needsAgeInput: false
+          });
+
+          console.log(`User age updated to ${age}, isMinor: ${isMinor}`);
+          return;
+        } catch (error: any) {
+          console.error('Error updating user age:', error);
+          set({
+            error: error.message || 'Failed to update user age',
+            isLoading: false
+          });
+          throw error;
         }
       },
 
@@ -550,7 +866,7 @@ export const useAuthStore = create<AuthStore>()(
           }
 
           // Create an object with only the allowed fields to update
-          const allowedFields = ['name', 'bio', 'learningStyle', 'preferredTopics', 'knowledgeLevel', 'isMinor'];
+          const allowedFields = ['name', 'bio', 'learningStyle', 'preferredTopics', 'knowledgeLevel', 'isMinor', 'age'];
           const sanitizedData: Record<string, any> = {};
 
           // Only include fields that are in the allowedFields array
@@ -807,7 +1123,8 @@ export const useAuthStore = create<AuthStore>()(
         user: state.user,
         token: state.token,
         isAuthenticated: state.isAuthenticated,
-        isOnboardingComplete: state.isOnboardingComplete
+        isOnboardingComplete: state.isOnboardingComplete,
+        needsAgeInput: state.needsAgeInput
       }),
     }
   )
