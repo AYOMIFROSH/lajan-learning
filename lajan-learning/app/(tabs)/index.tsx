@@ -141,6 +141,7 @@ export default function HomeScreen() {
         style={styles.container}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.contentContainer}
+        contentInsetAdjustmentBehavior="automatic" // Improved iOS behavior
       >
         <View style={styles.header}>
           <View>
@@ -152,6 +153,7 @@ export default function HomeScreen() {
             style={styles.qrButton}
             onPress={handleShareQRCode}
             accessibilityLabel="Share QR code"
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} // Increased touch area for iOS
           >
             <QrCode size={24} color={colors.primary} />
           </TouchableOpacity>
@@ -317,6 +319,7 @@ export default function HomeScreen() {
             <TouchableOpacity 
               onPress={() => router.push('/topics')}
               accessibilityLabel="See all topics"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} // Increased touch area for iOS
             >
               <Text style={styles.seeAllText}>See All</Text>
             </TouchableOpacity>
@@ -395,14 +398,14 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     padding: 16,
-    paddingBottom: 32, // Extra padding at the bottom
+    paddingBottom: Platform.OS === 'ios' ? 40 : 32, // Extra padding for iOS
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
-    paddingTop: Platform.OS === 'ios' ? 4 : 0, // Additional padding for iOS
+    paddingTop: Platform.OS === 'ios' ? 8 : 0, // Additional padding for iOS
   },
   greeting: {
     fontSize: 16,
@@ -476,6 +479,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
+    minWidth: 70, // Ensure consistent button size on iOS
+    alignItems: 'center', // Center text for consistent appearance
   },
   activeFilterButton: {
     backgroundColor: colors.card,
@@ -562,7 +567,8 @@ const styles = StyleSheet.create({
   },
   pathMilestone: {
     alignItems: 'center',
-    width: windowWidth / 5, // Responsive width based on screen width
+    // Ensure proper display on different iPhone models including small screens
+    width: Math.min(windowWidth / 5, 80), // Responsive width with maximum size
   },
   milestoneIcon: {
     width: 36,
@@ -588,7 +594,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.darkGray,
     textAlign: 'center',
-    maxWidth: 80,
+    maxWidth: Math.min(windowWidth / 5 - 5, 75), // Responsive text width
   },
   startLearningButton: {
     marginTop: 8,
